@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+	<title>1-bit Pixel Amoeba Experiment</title>
+	<style>
+		* {
+			box-sizing: border-box;
+			margin: 0;
+			padding: 0;
+			overflow: hidden;
+			user-select: none;
+			-webkit-user-select: none;
+			touch-action: none;
+		}
+
+		html,
+		body {
+			width: 100%;
+			height: 100%;
+			background: #000;
+		}
+
+		canvas {
+			position: absolute;
+			inset: 0;
+			width: 100vw;
+			height: 100vh;
+			background: #000;
+			image-rendering: pixelated;
+			image-rendering: crisp-edges;
+		}
+
+		#hint {
+			position: absolute;
+			left: 50%;
+			bottom: 36px;
+			transform: translateX(-50%);
+			color: rgba(255, 255, 255, 0.42);
+			font-family: monospace;
+			font-size: 10px;
+			letter-spacing: 0.12em;
+			text-align: center;
+			pointer-events: none;
+			transition: opacity 0.8s ease;
+			line-height: 1.7;
+			width: 90%;
+		}
+	</style>
+</head>
+
+<body>
+
+	<canvas id="canvas"></canvas>
+
+	<div id="hint">
+		PIXEL AMOEBA<br>
+		<span style="font-size:8px; opacity:0.65;">1-bit pixel metaball experiment</span>
+	</div>
+
+	<script>
+		const canvas = document.getElementById('canvas');
+		const ctx = canvas.getContext('2d', { alpha: false });
+
+		// ==================================================
+		// CONFIG
+		// ==================================================
+
+		// 256ベース。
+		// 128より粒は細かく、でもピクセル感は残るバランス。
+		const BASE_HEIGHT = 256;
+
+		let VIEW_WIDTH = 144;
+		let VIEW_HEIGHT = BASE_HEIGHT;
+
+		// 分裂の細かさを出すため、アメーバの個体数を 16 に増やします。
+		const NUM_BLOBS = 16;
+
+		// 線の途切れを防ぎつつ、極限まで細い輪郭を維持する設定（閾値幅を0.06に微調整）
+		// もしこれでも途切れる場合は幅を少し広げ（例：0.96〜1.04）、太く見えすぎる場合は狭めます（例：0.98〜1.02）。
+		const OUTLINE_LOW = 0.97;
+		const OUTLINE_HIGH = 1.03;
+
+		// 30fps。
+		// 高速アクションではないので、まずは負荷と雰囲気のバランス優先。
+		const TARGET_FPS = 30;
+		const FRAME_INTERVAL = 1000 / TARGET_FPS;
+		let lastFrameTime = 0;
+
+		// ==================================================
+		// IMAGEDATA BUFFER
+		// ==================================================
+
+		let imageData = null;
+		let imageBuf = null;
+
+		// エンディアンのチェック
+		const isLittleEndian = (() => {
+			const buf = new ArrayBuffer(4);
+			const u8 = new Uint8Array(buf);
+			const u32 = new Uint32Array(buf);
+			u32[0] = 0x12345678;
+			return u8[0] === 0x78;
+		})();
+
+		// 32bitカラー値 (0xAABBGGRR または 0xRRGGBBAA)
+		const COLOR_BLACK = isLittleEndian ? 0xFF000000 : 0x000000FF;
+		const COLOR_WHITE = isLittleEndian ? 0xFFFFFFFF : 0xFFFFFFFF;
+
+		// ==================================================
+		// VIEW
+		// ==================================================
+
+		function resizeCanvas() {
+			const aspect = window.innerWidth / window.innerHeight;
+
+			VIEW_HEIGHT = BASE_HEIGHT;
+			VIEW_WIDTH = Math.max(96, Math.round(BASE_HEIGHT * aspect));
+
+			canvas.width = VIEW_WIDTH;
+			canvas.height = VIEW_HEIGHT;
+
+			// ImageDataの初期化・再生成
+			imageData = ctx.createImageData(VIEW_WIDTH, VIEW_HEIGHT);
+			imageBuf = new Uint32Array(imageData.data.buffer);
+		}
+
+		resizeCanvas();
+
+		// ==================================================
+		// POINTER
+		// ==================================================
+
+		const pointer = {
+			x: -9999,
+			y: -9999,
+			active: false,
+
+			vx: 0,
+			vy: 0,
+			lastX: 0,
+			lastY: 0,
+
+			radius: 16 // 影響範囲を細かくするため小さく (52 -> 16)
+		};
+
+		function getPointerPos(e) {
+			return {
+				x: e.clientX * (VIEW_WIDTH / window.innerWidth),
+				y: e.clientY * (VIEW_HEIGHT / window.innerHeight)
+			};
+		}
+
+		// ==================================================
+		// PARTICLE & FORCEFIELD (タッチ後の残響)
+		// ==================================================
+
+		class TrailParticle {
+			constructor(x, y, vx, vy, r) {
+				this.x = x;
+				this.y = y;
+				// タッチ移動の速度をわずかに継承し、ゆっくりと漂わせる (震え防止)
+				this.vx = vx * 0.08 + (Math.random() - 0.5) * 0.08;
+				this.vy = vy * 0.08 + (Math.random() - 0.5) * 0.08;
+				this.baseR = r;
+				this.maxLife = 40 + Math.floor(Math.random() * 20); // 寿命を長めにしてゆっくり消滅
+				this.life = this.maxLife;
+			}
+
+			update() {
+				this.x += this.vx;
+				this.y += this.vy;
+				this.vx *= 0.94;
+				this.vy *= 0.94;
+				this.life--;
+			}
+
+			get r() {
+				const pct = this.life / this.maxLife;
+				return this.baseR * pct; // 徐々に縮小
+			}
+
+			get active() {
+				return this.life > 0;
+			}
+		}
+
+		class LingeringField {
+			constructor(x, y, r) {
+				this.x = x;
+				this.y = y;
+				this.baseR = r;
+				this.maxLife = 70; // 長めの力場コア
+				this.life = this.maxLife;
+				this.phase = Math.random() * Math.PI * 2;
+			}
+
+			update() {
+				this.life--;
+				this.phase += 0.03; // ゆっくり呼吸させる (震え防止)
+			}
+
+			get r() {
+				const pct = this.life / this.maxLife;
+				return this.baseR * pct * (1 + Math.sin(this.phase) * 0.06);
+			}
+
+			get active() {
+				return this.life > 0;
+			}
+		}
+
+		const particles = [];
+		const fields = [];
+
+		// ==================================================
+		// BLOB
+		// ==================================================
+
+		class Blob {
+			constructor(x, y, r) {
+				this.x = x;
+				this.y = y;
+				this.r = r;
+				this.baseR = r;
+
+				const angle = Math.random() * Math.PI * 2;
+				const speed = 0.06 + Math.random() * 0.08; // 初期速度を少しだけ高めて流動性を上げる
+
+				this.vx = Math.cos(angle) * speed;
+				this.vy = Math.sin(angle) * speed;
+
+				this.wanderAngle = angle;
+				this.currentAngle = angle; // スムーズな角度遷移のための補間用
+
+				this.phase = Math.random() * Math.PI * 2;
+				this.phaseSpeed = 0.01 + Math.random() * 0.012; // 呼吸を少しだけ活発に
+
+				// 有機的なウネウネ揺らぎのパラメータ
+				this.shapePhase = Math.random() * Math.PI * 2;
+				this.shapeSpeed = 0.012 + Math.random() * 0.016;
+
+				// 距離計算用二次形式の係数
+				this.ellipseA = 1.0;
+				this.ellipseB = 1.0;
+				this.ellipseC = 0.0;
+			}
+
+			update() {
+				this.phase += this.phaseSpeed;
+				this.shapePhase += this.shapeSpeed;
+
+				// 自律的な漂流 (方向変化を少し滑らかにしつつ推進力を与える)
+				this.wanderAngle += (Math.random() - 0.5) * 0.08;
+
+				const drift = 0.005; // 推進力を少し上げて流動性を向上
+				this.vx += Math.cos(this.wanderAngle) * drift;
+				this.vy += Math.sin(this.wanderAngle) * drift;
+
+				// タッチ吸引
+				if (pointer.active) {
+					const dx = pointer.x - this.x;
+					const dy = pointer.y - this.y;
+					const distSq = dx * dx + dy * dy;
+
+					const range = pointer.radius * 3.0; // 影響範囲を細かくした指のサイズに合わせる
+					const rangeSq = range * range;
+
+					if (distSq < rangeSq && distSq > 0.001) {
+						const dist = Math.sqrt(distSq);
+						const pct = 1 - dist / range;
+						const force = pct * pct * 0.12; // 吸引力を高めて運動量を上げる
+
+						this.vx += (dx / dist) * force;
+						this.vy += (dy / dist) * force;
+					}
+				}
+
+				// 残響力場への緩やかな吸引
+				fields.forEach(field => {
+					const dx = field.x - this.x;
+					const dy = field.y - this.y;
+					const distSq = dx * dx + dy * dy;
+					const range = field.r * 3.5;
+					if (distSq < range * range && distSq > 0.001) {
+						const dist = Math.sqrt(distSq);
+						const pct = 1 - dist / range;
+						const force = pct * pct * 0.05; // マイルドに吸引
+						this.vx += (dx / dist) * force;
+						this.vy += (dy / dist) * force;
+					}
+				});
+
+				// 近接時のアメーバ同士の融合・膨張ロジック (分裂・結合を滑らかにするため)
+				let targetR = this.baseR * (1 + Math.sin(this.phase) * 0.035);
+				let maxExpansion = 0;
+
+				blobs.forEach(other => {
+					if (other === this) return;
+
+					const dx = other.x - this.x;
+					const dy = other.y - this.y;
+					const distSq = dx * dx + dy * dy;
+					const combineRange = (this.baseR + other.baseR) * 1.5;
+					const combineRangeSq = combineRange * combineRange;
+
+					if (distSq < combineRangeSq && distSq > 0.001) {
+						const dist = Math.sqrt(distSq);
+						const overlap = 1 - (dist / combineRange);
+						const expansion = Math.pow(overlap, 1.4) * 0.32 * this.baseR;
+
+						if (expansion > maxExpansion) {
+							maxExpansion = expansion;
+						}
+					}
+				});
+
+				targetR += maxExpansion;
+				this.r += (targetR - this.r) * 0.15; // 滑らかに脈動と膨張を追従
+
+				// 空間抵抗 (少しだけ慣性を残すために抵抗を下げる)
+				this.vx *= 0.958;
+				this.vy *= 0.958;
+
+				// 速度レンジの制御 (運動量を上げるためレンジを引き上げる)
+				const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+
+				const minSpeed = 0.05;
+				const maxSpeed = 0.28;
+
+				if (speed > 0 && speed < minSpeed) {
+					this.vx = (this.vx / speed) * minSpeed;
+					this.vy = (this.vy / speed) * minSpeed;
+				} else if (speed > maxSpeed) {
+					this.vx = (this.vx / speed) * maxSpeed;
+					this.vy = (this.vy / speed) * maxSpeed;
+				}
+
+				this.x += this.vx;
+				this.y += this.vy;
+
+				this.handleBounds();
+				this.updateShape(speed);
+			}
+
+			updateShape(speed) {
+				// 進行方向への引き伸ばし率 (運動量向上に合わせて最大20%引き延ばす)
+				const baseStretch = 1.0 + Math.min(speed * 0.5, 0.20);
+				// 自律的なウネウネ揺らぎ (4%程度のマイルドな変調)
+				const wiggle = Math.sin(this.shapePhase) * 0.04;
+				const stretch = baseStretch + wiggle;
+
+				// スケール係数 (距離の逆乗計算用)
+				const s_u = 1.0 / stretch; // 進行方向
+				const s_v = stretch;       // 垂直方向
+
+				// 回転角度の決定
+				let targetAngle = this.wanderAngle;
+				if (speed > 0.02) {
+					targetAngle = Math.atan2(this.vy, this.vx);
+				} else {
+					targetAngle = this.shapePhase * 0.3;
+				}
+
+				// 角度をスムーズに追従させて「ぷるぷる震える」のを完全に防ぐ (Lerp)
+				let diff = targetAngle - this.currentAngle;
+				diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+				this.currentAngle += diff * 0.12; // 追従のレスポンスをやや高める
+
+				const cos = Math.cos(this.currentAngle);
+				const sin = Math.sin(this.currentAngle);
+
+				const su2 = s_u * s_u;
+				const sv2 = s_v * s_v;
+
+				// 楕円距離計算用の行列成分を事前計算
+				this.ellipseA = cos * cos * su2 + sin * sin * sv2;
+				this.ellipseB = sin * sin * su2 + cos * cos * sv2;
+				this.ellipseC = 2 * cos * sin * (su2 - sv2);
+			}
+
+			handleBounds() {
+				const margin = this.baseR * 0.65;
+				const wallForce = 0.015; // レスポンス向上のため復元力をやや強める
+
+				if (this.x < margin * 2) {
+					this.vx += (margin * 2 - this.x) * wallForce;
+				}
+				if (this.x > VIEW_WIDTH - margin * 2) {
+					this.vx -= (this.x - (VIEW_WIDTH - margin * 2)) * wallForce;
+				}
+				if (this.y < margin * 2) {
+					this.vy += (margin * 2 - this.y) * wallForce;
+				}
+				if (this.y > VIEW_HEIGHT - margin * 2) {
+					this.vy -= (this.y - (VIEW_HEIGHT - margin * 2)) * wallForce;
+				}
+			}
+		}
+
+		// ==================================================
+		// WORLD
+		// ==================================================
+
+		const blobs = [];
+
+		function createBlobs() {
+			blobs.length = 0;
+
+			for (let i = 0; i < NUM_BLOBS; i++) {
+				// 細かな分裂感を出すため、256ベース解像度に合わせたアメーバサイズ (8〜20px)
+				const r = 8 + Math.pow(Math.random(), 1.4) * 12;
+				const x = r + Math.random() * Math.max(1, VIEW_WIDTH - r * 2);
+				const y = r + Math.random() * Math.max(1, VIEW_HEIGHT - r * 2);
+
+				blobs.push(new Blob(x, y, r));
+			}
+		}
+
+		function clampBlobsToView() {
+			blobs.forEach(blob => {
+				const margin = blob.baseR * 0.65;
+
+				blob.x = Math.max(margin, Math.min(VIEW_WIDTH - margin, blob.x));
+				blob.y = Math.max(margin, Math.min(VIEW_HEIGHT - margin, blob.y));
+			});
+		}
+
+		createBlobs();
+
+		window.addEventListener('resize', () => {
+			resizeCanvas();
+			clampBlobsToView();
+		});
+
+		// ==================================================
+		// INPUT
+		// ==================================================
+
+		canvas.addEventListener('pointerdown', (e) => {
+			canvas.setPointerCapture(e.pointerId);
+
+			pointer.active = true;
+
+			const pos = getPointerPos(e);
+
+			pointer.x = pos.x;
+			pointer.y = pos.y;
+			pointer.lastX = pos.x;
+			pointer.lastY = pos.y;
+			pointer.vx = 0;
+			pointer.vy = 0;
+
+			const hint = document.getElementById('hint');
+			if (hint) hint.style.opacity = '0';
+		});
+
+		let spawnTimer = 0;
+
+		canvas.addEventListener('pointermove', (e) => {
+			if (!pointer.active) return;
+
+			const pos = getPointerPos(e);
+
+			pointer.x = pos.x;
+			pointer.y = pos.y;
+
+			// 前フレームからの移動量を計算
+			const dx = pointer.x - pointer.lastX;
+			const dy = pointer.y - pointer.lastY;
+			const dist = Math.sqrt(dx * dx + dy * dy);
+
+			// ポインターサイズに合わせて残り香パーティクルのサイズも細かく
+			if (dist > 2.0) {
+				const r = 2.5 + Math.random() * 3.0;
+				particles.push(new TrailParticle(pointer.x, pointer.y, dx, dy, r));
+			}
+		});
+
+		canvas.addEventListener('pointerup', (e) => {
+			if (!pointer.active) return;
+
+			pointer.active = false;
+			canvas.releasePointerCapture(e.pointerId);
+
+			// 離した瞬間に、その位置にしばらく残る力場コアを生成
+			fields.push(new LingeringField(pointer.x, pointer.y, pointer.radius * 0.65));
+
+			// スプラッシュパーティクル（飛び散る粒子）を生成 (小さめ)
+			const count = 4 + Math.floor(Math.random() * 3);
+			for (let i = 0; i < count; i++) {
+				const angle = Math.random() * Math.PI * 2;
+				const speed = 0.2 + Math.random() * 0.4;
+				const vx = Math.cos(angle) * speed;
+				const vy = Math.sin(angle) * speed;
+				const r = 2.0 + Math.random() * 2.0;
+				particles.push(new TrailParticle(pointer.x, pointer.y, vx, vy, r));
+			}
+
+			// 離した瞬間の速度を周囲のアメーバへ伝える (伝播力を高める)
+			blobs.forEach(blob => {
+				const dx = pointer.x - blob.x;
+				const dy = pointer.y - blob.y;
+				const distSq = dx * dx + dy * dy;
+
+				const range = pointer.radius * 2.2;
+				const rangeSq = range * range;
+
+				if (distSq < rangeSq) {
+					const pct = 1 - Math.sqrt(distSq) / range;
+
+					blob.vx += pointer.vx * pct * 0.12; // 0.05 -> 0.12 にアップ
+					blob.vy += pointer.vy * pct * 0.12;
+				}
+			});
+		});
+
+		canvas.addEventListener('pointercancel', () => {
+			pointer.active = false;
+		});
+
+		// ==================================================
+		// RENDERER
+		// ==================================================
+
+		function drawPixelMetaballs() {
+			// バッファをクリア
+			imageBuf.fill(COLOR_BLACK);
+
+			// 1. 各Blobのパラメータをローカルのフラットな配列に抽出
+			const bLen = blobs.length;
+			const bX = new Float32Array(bLen);
+			const bY = new Float32Array(bLen);
+			const bR2 = new Float32Array(bLen);
+			const bA = new Float32Array(bLen);
+			const bB = new Float32Array(bLen);
+			const bC = new Float32Array(bLen);
+
+			for (let i = 0; i < bLen; i++) {
+				const blob = blobs[i];
+				bX[i] = blob.x;
+				bY[i] = blob.y;
+				bR2[i] = blob.r * blob.r;
+				bA[i] = blob.ellipseA;
+				bB[i] = blob.ellipseB;
+				bC[i] = blob.ellipseC;
+			}
+
+			// 2. 残香力場データの平坦化
+			const activeFields = [];
+			for (let i = 0; i < fields.length; i++) {
+				if (fields[i].active) activeFields.push(fields[i]);
+			}
+			const fLen = activeFields.length;
+			const fX = new Float32Array(fLen);
+			const fY = new Float32Array(fLen);
+			const fR2 = new Float32Array(fLen);
+			for (let i = 0; i < fLen; i++) {
+				const f = activeFields[i];
+				fX[i] = f.x;
+				fY[i] = f.y;
+				const r = f.r;
+				fR2[i] = r * r;
+			}
+
+			// 3. 残り香パーティクルデータの平坦化
+			const activeParticles = [];
+			for (let i = 0; i < particles.length; i++) {
+				if (particles[i].active) activeParticles.push(particles[i]);
+			}
+			const pLen = activeParticles.length;
+			const pX = new Float32Array(pLen);
+			const pY = new Float32Array(pLen);
+			const pR2 = new Float32Array(pLen);
+			for (let i = 0; i < pLen; i++) {
+				const p = activeParticles[i];
+				pX[i] = p.x;
+				pY[i] = p.y;
+				const r = p.r;
+				pR2[i] = r * r;
+			}
+
+			// 4. タッチポインター
+			const pActive = pointer.active;
+			const pxX = pointer.x;
+			const pxY = pointer.y;
+			const pxR2 = (pointer.radius * 0.65) * (pointer.radius * 0.65);
+
+			// ピクセルループ (CPU最適化)
+			for (let y = 0; y < VIEW_HEIGHT; y++) {
+				const py = y + 0.5;
+				const rowOffset = y * VIEW_WIDTH;
+
+				for (let x = 0; x < VIEW_WIDTH; x++) {
+					const px = x + 0.5;
+					let density = 0;
+
+					// Blobの寄与 (楕円)
+					for (let i = 0; i < bLen; i++) {
+						const dx = px - bX[i];
+						const dy = py - bY[i];
+						const distSq = bA[i] * dx * dx + bB[i] * dy * dy + bC[i] * dx * dy;
+						density += bR2[i] / (distSq + 0.0001);
+					}
+
+					// タッチの寄与 (真円)
+					if (pActive) {
+						const dx = px - pxX;
+						const dy = py - pxY;
+						const distSq = dx * dx + dy * dy;
+						density += pxR2 / (distSq + 0.0001);
+					}
+
+					// 残響力場の寄与 (真円)
+					for (let i = 0; i < fLen; i++) {
+						const dx = px - fX[i];
+						const dy = py - fY[i];
+						const distSq = dx * dx + dy * dy;
+						density += fR2[i] / (distSq + 0.0001);
+					}
+
+					// 残り香パーティクルの寄与 (真円)
+					for (let i = 0; i < pLen; i++) {
+						const dx = px - pX[i];
+						const dy = py - pY[i];
+						const distSq = dx * dx + dy * dy;
+						density += pR2[i] / (distSq + 0.0001);
+					}
+
+					// 1px幅に限りなく近づけた境界判定
+					if (density > OUTLINE_LOW && density < OUTLINE_HIGH) {
+						imageBuf[rowOffset + x] = COLOR_WHITE;
+					}
+				}
+			}
+
+			// バッファをキャンバスに描画
+			ctx.putImageData(imageData, 0, 0);
+		}
+
+		// ==================================================
+		// LOOP
+		// ==================================================
+
+		function update() {
+			if (pointer.active) {
+				pointer.vx = pointer.x - pointer.lastX;
+				pointer.vy = pointer.y - pointer.lastY;
+
+				pointer.lastX = pointer.x;
+				pointer.lastY = pointer.y;
+
+				// タッチ中、指の下で微小な残り香パーティクルを生成
+				spawnTimer++;
+				if (spawnTimer % 2 === 0) {
+					const r = 3 + Math.random() * 3;
+					particles.push(new TrailParticle(pointer.x, pointer.y, pointer.vx, pointer.vy, r));
+				}
+			} else {
+				spawnTimer = 0;
+			}
+
+			// アメーバの更新
+			blobs.forEach(blob => blob.update());
+
+			// パーティクルの更新とクリーンアップ
+			for (let i = particles.length - 1; i >= 0; i--) {
+				const p = particles[i];
+				p.update();
+				if (!p.active) {
+					particles.splice(i, 1);
+				}
+			}
+
+			// 残響力場の更新とクリーンアップ
+			for (let i = fields.length - 1; i >= 0; i--) {
+				const f = fields[i];
+				f.update();
+				if (!f.active) {
+					fields.splice(i, 1);
+				}
+			}
+		}
+
+		function loop(timestamp) {
+			requestAnimationFrame(loop);
+
+			if (timestamp - lastFrameTime < FRAME_INTERVAL) return;
+			lastFrameTime = timestamp;
+
+			update();
+			drawPixelMetaballs();
+		}
+
+		requestAnimationFrame(loop);
+	</script>
+
+</body>
+
+</html>

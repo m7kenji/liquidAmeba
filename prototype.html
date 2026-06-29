@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+	<title>1-bit Floating Amoeba (High Performance)</title>
+	<style>
+		* {
+			box-sizing: border-box;
+			margin: 0;
+			padding: 0;
+			overflow: hidden;
+			user-select: none;
+			-webkit-user-select: none;
+			touch-action: none;
+		}
+
+		body,
+		html {
+			width: 100%;
+			height: 100%;
+			background-color: #000000;
+			position: relative;
+			cursor: grab;
+		}
+
+		body:active {
+			cursor: grabbing;
+		}
+
+		canvas {
+			position: absolute;
+			top: 0;
+			left: 0;
+			width: 100vw;
+			height: 100vh;
+			background: transparent;
+			image-rendering: -moz-crisp-edges;
+			image-rendering: pixelated;
+			image-rendering: crisp-edges;
+			filter: url(#one-bit-outline);
+		}
+
+		#hint {
+			position: absolute;
+			bottom: 40px;
+			left: 50%;
+			transform: translateX(-50%);
+			color: rgba(255, 255, 255, 0.4);
+			font-family: monospace;
+			font-size: 10px;
+			letter-spacing: 0.15em;
+			text-transform: uppercase;
+			pointer-events: none;
+			z-index: 10;
+			transition: opacity 1.0s ease;
+			text-align: center;
+			line-height: 1.8;
+			width: 90%;
+		}
+	</style>
+</head>
+
+<body>
+
+	<div id="hint">
+		FLOATING AMY: 1-BIT<br>
+		<span style="font-size: 8px; opacity: 0.6;">
+			触れた場所を、少しだけ覚えているアメーバたち
+		</span>
+	</div>
+
+	<canvas id="canvas"></canvas>
+
+	<svg style="position: absolute; width: 0; height: 0; pointer-events: none;" aria-hidden="true">
+		<defs>
+			<filter id="one-bit-outline" x="-10%" y="-10%" width="120%" height="120%">
+				<feGaussianBlur in="SourceGraphic" stdDeviation="9" result="blur" />
+
+				<feComponentTransfer in="blur" result="outline">
+					<feFuncA type="discrete" tableValues="
+                    0 0 0 0 0 0 0 0 0 0
+                    0 0 1 1 0 0 0 0 0 0
+                    0 0 0 0 0 0 0 0 0 0" />
+				</feComponentTransfer>
+
+				<feColorMatrix type="matrix" values="
+                0 0 0 0 1
+                0 0 0 0 1
+                0 0 0 0 1
+                0 0 0 1 0" in="outline" />
+			</filter>
+		</defs>
+	</svg>
+
+	<script>
+		const canvas = document.getElementById('canvas');
+		const ctx = canvas.getContext('2d');
+
+		// 高さを基準に、画面比率へ合わせて横幅を可変にする。
+		// これにより、アメーバの形を歪ませず、空間だけが広がる。
+		const BASE_HEIGHT = 640;
+
+		let VIEW_WIDTH = 360;
+		let VIEW_HEIGHT = BASE_HEIGHT;
+
+		function resizeCanvas() {
+			const aspect = window.innerWidth / window.innerHeight;
+
+			VIEW_HEIGHT = BASE_HEIGHT;
+			VIEW_WIDTH = Math.round(BASE_HEIGHT * aspect);
+
+			canvas.width = VIEW_WIDTH;
+			canvas.height = VIEW_HEIGHT;
+		}
+
+		resizeCanvas();
+
+		const pointer = {
+			x: -1000,
+			y: -1000,
+			active: false,
+
+			vx: 0,
+			vy: 0,
+			lastX: 0,
+			lastY: 0,
+
+			radius: 35,
+
+			// 指を置いた瞬間の「ぱっ」を避けるための表示用半径
+			visualRadius: 0,
+			visualTargetRadius: 35
+		};
+
+		// 指を離したあとに残る、力場の残響。
+		// 見た目としては一瞬だけ膜／波紋として見え、
+		// その後も少しだけアメーバの動きに影響する。
+		const forceFields = [];
+
+		class ForceField {
+			constructor(x, y, vx, vy) {
+				this.x = x;
+				this.y = y;
+
+				// 離した瞬間の指の流れ
+				this.vx = vx;
+				this.vy = vy;
+
+				// 物理的な力場の寿命
+				this.life = 1.0;
+				this.decay = 0.018;
+
+				this.radius = 85;
+				this.maxRadius = 145;
+
+				// 中心へ引き寄せる力
+				this.pullStrength = 0.055;
+
+				// 指を離した方向へ、少しだけ流れを残す力
+				this.flowStrength = 0.018;
+
+				// 視覚的な残響の寿命。
+				// 物理的な力場より早めに消える。
+				this.visualLife = 1.0;
+				this.visualDecay = 0.045;
+
+				this.visualRadius = 22;
+				this.visualMaxRadius = 110;
+			}
+
+			update() {
+				this.life -= this.decay;
+				this.visualLife -= this.visualDecay;
+
+				// 力場はゆっくり広がる
+				this.radius += (this.maxRadius - this.radius) * 0.025;
+
+				// 視覚的な波紋は少し速く広がる
+				this.visualRadius += (this.visualMaxRadius - this.visualRadius) * 0.08;
+			}
+
+			applyTo(blob) {
+				if (this.life <= 0) return;
+
+				const dx = this.x - blob.x;
+				const dy = this.y - blob.y;
+				const dist = Math.hypot(dx, dy);
+
+				if (dist <= 0 || dist > this.radius) return;
+
+				const pct = 1 - dist / this.radius;
+
+				// smoothstep
+				// 中心ほど強く、外側ほど自然に弱くなる。
+				const ease = pct * pct * (3 - 2 * pct);
+				const power = ease * this.life;
+
+				// 場の中心へ少し吸われる
+				blob.vx += (dx / dist) * this.pullStrength * power;
+				blob.vy += (dy / dist) * this.pullStrength * power;
+
+				// 指を離したときの流れが少しだけ残る
+				blob.vx += this.vx * this.flowStrength * power;
+				blob.vy += this.vy * this.flowStrength * power;
+			}
+
+			draw(context) {
+				if (this.visualLife <= 0) return;
+
+				const life = Math.max(0, this.visualLife);
+
+				context.save();
+
+				// 1. 薄い膜。
+				// SVGフィルタ後に1-bit化されるため、完全な半透明表現というより、
+				// 「白黒のにじみ」として残る。
+				context.globalAlpha = life * 0.35;
+				context.beginPath();
+				context.arc(this.x, this.y, this.visualRadius, 0, Math.PI * 2);
+				context.fillStyle = '#ffffff';
+				context.fill();
+
+				// 2. 外周の弱いリング。
+				// 触った場所から時間が広がる感じを少しだけ見せる。
+				context.globalAlpha = life * 0.9;
+				context.beginPath();
+				context.arc(this.x, this.y, this.visualRadius * 1.12, 0, Math.PI * 2);
+				context.lineWidth = 4 + (1 - life) * 8;
+				context.strokeStyle = '#ffffff';
+				context.stroke();
+
+				context.restore();
+			}
+
+			get alive() {
+				return this.life > 0 || this.visualLife > 0;
+			}
+		}
+
+		class Amoeba {
+			constructor(x, y, r) {
+				this.x = x;
+				this.y = y;
+
+				this.baseR = r;
+				this.r = r;
+
+				const initialAngle = Math.random() * Math.PI * 2;
+				const initialSpeed = 0.15 + Math.random() * 0.15;
+
+				this.vx = Math.cos(initialAngle) * initialSpeed;
+				this.vy = Math.sin(initialAngle) * initialSpeed;
+
+				this.wanderAngle = initialAngle;
+				this.time = Math.random() * 100;
+				this.pulseSpeed = 0.02 + Math.random() * 0.03;
+
+				this.numPoints = Math.max(8, Math.floor(r * 0.4));
+			}
+
+			update() {
+				this.time += this.pulseSpeed;
+
+				// --- 1. 自律的なふわふわ漂流 ---
+				this.wanderAngle += (Math.random() - 0.5) * 0.12;
+
+				const driftForce = 0.012;
+				this.vx += Math.cos(this.wanderAngle) * driftForce;
+				this.vy += Math.sin(this.wanderAngle) * driftForce;
+
+				// --- 2. 近接時の膨張ロジック ---
+				let targetR = this.baseR;
+				let maxExpansion = 0;
+
+				blobs.forEach(other => {
+					if (other === this) return;
+
+					const dx = other.x - this.x;
+					const dy = other.y - this.y;
+					const dist = Math.hypot(dx, dy);
+					const combineRange = (this.baseR + other.baseR) * 1.6;
+
+					if (dist < combineRange) {
+						const overlap = 1 - (dist / combineRange);
+						const expansion = Math.pow(overlap, 1.5) * 0.35 * this.baseR;
+
+						if (expansion > maxExpansion) {
+							maxExpansion = expansion;
+						}
+					}
+				});
+
+				targetR += maxExpansion;
+				this.r += (targetR - this.r) * 0.1;
+
+				// --- 3. 指への吸い付き ---
+				let currentFriction = 0.95;
+				let isBeingPulled = false;
+
+				if (pointer.active) {
+					const dx = pointer.x - this.x;
+					const dy = pointer.y - this.y;
+					const dist = Math.hypot(dx, dy);
+					const pullRange = pointer.radius * 3.5;
+
+					if (dist < pullRange) {
+						isBeingPulled = true;
+
+						const pct = 1 - dist / pullRange;
+
+						if (dist > 1) {
+							const pullForce = Math.pow(pct, 2) * 0.65;
+							this.vx += (dx / dist) * pullForce;
+							this.vy += (dy / dist) * pullForce;
+						}
+
+						// 中心付近ではブレーキを強め、震えを抑える
+						currentFriction = 0.95 - (pct * 0.32);
+					}
+				}
+
+				// --- 3.5. 指を離したあとの力場 ---
+				forceFields.forEach(field => {
+					field.applyTo(this);
+				});
+
+				// 空間抵抗
+				this.vx *= currentFriction;
+				this.vy *= currentFriction;
+
+				// --- 4. 速度レンジの制御 ---
+				const currentSpeed = Math.hypot(this.vx, this.vy);
+
+				if (!isBeingPulled) {
+					const minSpeed = 0.15;
+					const maxSpeed = 0.45;
+
+					if (currentSpeed < minSpeed && currentSpeed > 0) {
+						this.vx = (this.vx / currentSpeed) * minSpeed;
+						this.vy = (this.vy / currentSpeed) * minSpeed;
+					} else if (currentSpeed > maxSpeed) {
+						this.vx *= 0.92;
+						this.vy *= 0.92;
+					}
+				}
+
+				this.x += this.vx;
+				this.y += this.vy;
+
+				// --- 5. 境界回避 ---
+				const margin = this.r * 0.4;
+				const edgeBuffer = 25;
+
+				if (this.x < margin + edgeBuffer) {
+					this.vx += 0.025;
+					this.wanderAngle = 0;
+				}
+
+				if (this.x > VIEW_WIDTH - margin - edgeBuffer) {
+					this.vx -= 0.025;
+					this.wanderAngle = Math.PI;
+				}
+
+				if (this.y < margin + edgeBuffer) {
+					this.vy += 0.025;
+					this.wanderAngle = Math.PI / 2;
+				}
+
+				if (this.y > VIEW_HEIGHT - margin - edgeBuffer) {
+					this.vy -= 0.025;
+					this.wanderAngle = -Math.PI / 2;
+				}
+
+				// 念のための安全バウンド
+				if (this.x < margin) {
+					this.x = margin;
+					this.vx *= -0.3;
+				}
+
+				if (this.x > VIEW_WIDTH - margin) {
+					this.x = VIEW_WIDTH - margin;
+					this.vx *= -0.3;
+				}
+
+				if (this.y < margin) {
+					this.y = margin;
+					this.vy *= -0.3;
+				}
+
+				if (this.y > VIEW_HEIGHT - margin) {
+					this.y = VIEW_HEIGHT - margin;
+					this.vy *= -0.3;
+				}
+			}
+
+			drawShape(context) {
+				context.beginPath();
+
+				for (let i = 0; i < this.numPoints; i++) {
+					const angle = (i / this.numPoints) * Math.PI * 2;
+
+					const pulse = Math.sin(this.time * 1.5 + angle * 3) * 0.08;
+					const wave = Math.cos(this.time * 0.5 - angle * 2) * 0.06;
+					const currentVertexR = this.r * (1 + pulse + wave);
+
+					const px = this.x + Math.cos(angle) * currentVertexR;
+					const py = this.y + Math.sin(angle) * currentVertexR;
+
+					if (i === 0) {
+						context.moveTo(px, py);
+					} else {
+						context.lineTo(px, py);
+					}
+				}
+
+				context.closePath();
+				context.fill();
+			}
+		}
+
+		// アメーバ生成
+		const blobs = [];
+		const numBlobs = 14;
+
+		for (let i = 0; i < numBlobs; i++) {
+			const r = 18 + Math.pow(Math.random(), 1.5) * 32;
+			const x = r + Math.random() * (VIEW_WIDTH - r * 2);
+			const y = r + Math.random() * (VIEW_HEIGHT - r * 2);
+
+			blobs.push(new Amoeba(x, y, r));
+		}
+
+		function clampBlobsToView() {
+			blobs.forEach(blob => {
+				const margin = blob.r * 0.4;
+
+				blob.x = Math.max(margin, Math.min(VIEW_WIDTH - margin, blob.x));
+				blob.y = Math.max(margin, Math.min(VIEW_HEIGHT - margin, blob.y));
+			});
+		}
+
+		window.addEventListener('resize', () => {
+			resizeCanvas();
+			clampBlobsToView();
+		});
+
+		function draw() {
+			ctx.clearRect(0, 0, VIEW_WIDTH, VIEW_HEIGHT);
+			ctx.fillStyle = '#ffffff';
+
+			// 触った場所の視覚的な残響。
+			// アメーバより先に描くことで、背後にある膜っぽくする。
+			forceFields.forEach(field => {
+				field.draw(ctx);
+			});
+
+			// アメーバ本体
+			blobs.forEach(blob => {
+				blob.drawShape(ctx);
+			});
+
+			// タッチ中の指の存在。
+			// visualRadiusで、出現が少しだけ膨らむ。
+			if (pointer.active || pointer.visualRadius > 0.5) {
+				ctx.beginPath();
+				ctx.arc(pointer.x, pointer.y, pointer.visualRadius, 0, Math.PI * 2);
+				ctx.fill();
+			}
+		}
+
+		function loop() {
+			if (pointer.active) {
+				pointer.vx = pointer.x - pointer.lastX;
+				pointer.vy = pointer.y - pointer.lastY;
+				pointer.lastX = pointer.x;
+				pointer.lastY = pointer.y;
+			}
+
+			// 指の表示半径を滑らかに変化させる
+			if (pointer.active) {
+				pointer.visualRadius += (pointer.visualTargetRadius - pointer.visualRadius) * 0.28;
+			} else {
+				pointer.visualRadius += (0 - pointer.visualRadius) * 0.2;
+			}
+
+			// 力場の更新と削除
+			for (let i = forceFields.length - 1; i >= 0; i--) {
+				forceFields[i].update();
+
+				if (!forceFields[i].alive) {
+					forceFields.splice(i, 1);
+				}
+			}
+
+			blobs.forEach(blob => blob.update());
+			draw();
+
+			requestAnimationFrame(loop);
+		}
+
+		function getPointerPos(e) {
+			return {
+				x: e.clientX * (VIEW_WIDTH / window.innerWidth),
+				y: e.clientY * (VIEW_HEIGHT / window.innerHeight)
+			};
+		}
+
+		canvas.addEventListener('pointerdown', (e) => {
+			canvas.setPointerCapture(e.pointerId);
+
+			pointer.active = true;
+
+			const pos = getPointerPos(e);
+			pointer.x = pos.x;
+			pointer.y = pos.y;
+			pointer.lastX = pos.x;
+			pointer.lastY = pos.y;
+			pointer.vx = 0;
+			pointer.vy = 0;
+
+			// 指を置いた瞬間、いきなり円を出さず、0から膨らませる
+			pointer.visualRadius = 0;
+
+			const hint = document.getElementById('hint');
+			if (hint) hint.style.opacity = '0';
+		});
+
+		canvas.addEventListener('pointermove', (e) => {
+			if (!pointer.active) return;
+
+			const pos = getPointerPos(e);
+			pointer.x = pos.x;
+			pointer.y = pos.y;
+		});
+
+		canvas.addEventListener('pointerup', (e) => {
+			if (!pointer.active) return;
+
+			pointer.active = false;
+			canvas.releasePointerCapture(e.pointerId);
+
+			// 離した瞬間のスピードを近くのアメーバへ伝播
+			blobs.forEach(blob => {
+				const dx = pointer.x - blob.x;
+				const dy = pointer.y - blob.y;
+				const dist = Math.hypot(dx, dy);
+
+				if (dist < pointer.radius * 2.5) {
+					const influence = 1 - dist / (pointer.radius * 2.5);
+
+					blob.vx += pointer.vx * influence * 0.45;
+					blob.vy += pointer.vy * influence * 0.45;
+				}
+			});
+
+			// 指を離した場所に、視覚的にも物理的にも残る力場を作る
+			forceFields.push(new ForceField(pointer.x, pointer.y, pointer.vx, pointer.vy));
+
+			// 力場が増えすぎないように上限を設ける
+			if (forceFields.length > 6) {
+				forceFields.shift();
+			}
+
+			// すぐ座標を飛ばすと、指の消え際アニメーションが画面外へ行くため、
+			// visualRadiusが消えるまでは最後の位置を保持する。
+		});
+
+		canvas.addEventListener('pointercancel', () => {
+			pointer.active = false;
+
+			forceFields.push(new ForceField(pointer.x, pointer.y, pointer.vx, pointer.vy));
+
+			if (forceFields.length > 6) {
+				forceFields.shift();
+			}
+		});
+
+		loop();
+
+		setTimeout(() => {
+			const hint = document.getElementById('hint');
+			if (hint) hint.style.opacity = '0';
+		}, 4000);
+	</script>
+
+</body>
+
+</html>
