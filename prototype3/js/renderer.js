@@ -1,3 +1,5 @@
+import { CONFIG } from './config.js';
+
 /**
  * アメーバやタッチサークルの描画処理を担うモジュール
  */
@@ -12,7 +14,7 @@ export function drawAmoeba(ctx, amoeba) {
 	for (let i = 0; i < amoeba.numPoints; i++) {
 		const angle = (i / amoeba.numPoints) * Math.PI * 2;
 
-		// 呼吸のように脈動する周期的変化と、ランダムで滑らかなウネリ
+		// 呼吸のように脈動する周期的変化と、ランダムで滑らかなウネリ (振幅はマイルドな初期値に復元)
 		const pulse = Math.sin(amoeba.time * 1.0 + angle * 3) * 0.04;
 		const wave = Math.cos(amoeba.time * 0.4 - angle * 2) * 0.03;
 		const currentVertexR = amoeba.r * (1 + pulse + wave);

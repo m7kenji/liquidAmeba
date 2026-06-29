@@ -11,6 +11,7 @@ export const CONFIG = {
 	AMOEBA: {
 		MIN_RADIUS: 18,
 		MAX_RADIUS_ADD: 32,
+		WIGGLE_SCALE: 1.0,     // アメーバの形状うねりのスケール（1.0が基準値）
 		WANDER_DRIFT: 0.004,
 		WANDER_ANGLE_CHANGE: 0.05,
 		MIN_SPEED: 0.02,
@@ -26,7 +27,7 @@ export const CONFIG = {
 
 	// ポインター（タッチ）物理
 	POINTER: {
-		RADIUS: 28,
+		RADIUS: 56,           // 28 -> 56 LINE WIDTH最大時の視認性維持のため大きさを2倍に拡張
 		PULL_RANGE_MULTIPLIER: 3.0,
 		PULL_FORCE: 0.22,
 		MAX_FRICTION_DECREASE: 0.24,

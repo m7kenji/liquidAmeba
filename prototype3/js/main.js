@@ -195,9 +195,201 @@ canvas.addEventListener('pointercancel', () => {
 	}
 });
 
+// ==================================================
+// SETTINGS MENU & LOCAL STORAGE
+// ==================================================
+
+const STORAGE_KEY = 'amy_relaxation_settings';
+
+function saveSettings() {
+	const settings = {
+		ambientVol: CONFIG.AUDIO.DRONE.VOLUME,
+		flowVol: CONFIG.AUDIO.WATER_FLOW.MAX_VOLUME,
+		bubblesVol: CONFIG.AUDIO.BUBBLE.MAX_VOLUME,
+		fluidSpeed: CONFIG.AMOEBA.MAX_SPEED,
+		fluidFusion: CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER,
+		lineWidth: parseFloat(document.getElementById('smooth-one-bit').querySelector('feGaussianBlur').getAttribute('stdDeviation')),
+		attraction: CONFIG.POINTER.PULL_FORCE,
+		wiggle: CONFIG.AMOEBA.WIGGLE_SCALE
+	};
+	localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+}
+
+function loadSettings() {
+	try {
+		const raw = localStorage.getItem(STORAGE_KEY);
+		if (!raw) return;
+
+		const settings = JSON.parse(raw);
+
+		if (settings.ambientVol !== undefined) CONFIG.AUDIO.DRONE.VOLUME = settings.ambientVol;
+		if (settings.flowVol !== undefined) CONFIG.AUDIO.WATER_FLOW.MAX_VOLUME = settings.flowVol;
+		if (settings.bubblesVol !== undefined) CONFIG.AUDIO.BUBBLE.MAX_VOLUME = settings.bubblesVol;
+
+		if (settings.fluidSpeed !== undefined) {
+			CONFIG.AMOEBA.MAX_SPEED = settings.fluidSpeed;
+			CONFIG.AMOEBA.PULSE_SPEED_MAX = 0.008 + settings.fluidSpeed * 0.006;
+			CONFIG.AMOEBA.PULSE_SPEED_MIN = 0.003 + settings.fluidSpeed * 0.003;
+		}
+
+		if (settings.fluidFusion !== undefined) CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER = settings.fluidFusion;
+		if (settings.attraction !== undefined) CONFIG.POINTER.PULL_FORCE = settings.attraction;
+		if (settings.wiggle !== undefined) CONFIG.AMOEBA.WIGGLE_SCALE = settings.wiggle;
+
+		if (settings.lineWidth !== undefined) {
+			document.getElementById('smooth-one-bit').querySelector('feGaussianBlur').setAttribute('stdDeviation', settings.lineWidth);
+		}
+
+		syncSlidersToConfig(settings);
+	} catch (e) {
+		console.error('Failed to load settings from storage', e);
+	}
+}
+
+function syncSlidersToConfig(settings = {}) {
+	const ambient = settings.ambientVol !== undefined ? settings.ambientVol : CONFIG.AUDIO.DRONE.VOLUME;
+	const flow = settings.flowVol !== undefined ? settings.flowVol : CONFIG.AUDIO.WATER_FLOW.MAX_VOLUME;
+	const bubbles = settings.bubblesVol !== undefined ? settings.bubblesVol : CONFIG.AUDIO.BUBBLE.MAX_VOLUME;
+	const speed = settings.fluidSpeed !== undefined ? settings.fluidSpeed : CONFIG.AMOEBA.MAX_SPEED;
+	const fusion = settings.fluidFusion !== undefined ? settings.fluidFusion : CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER;
+	const attraction = settings.attraction !== undefined ? settings.attraction : CONFIG.POINTER.PULL_FORCE;
+	const wiggle = settings.wiggle !== undefined ? settings.wiggle : CONFIG.AMOEBA.WIGGLE_SCALE;
+
+	const filterElement = document.getElementById('smooth-one-bit').querySelector('feGaussianBlur');
+	const stdDev = settings.lineWidth !== undefined ? settings.lineWidth : parseFloat(filterElement.getAttribute('stdDeviation'));
+
+	document.getElementById('param-ambient-vol').value = ambient;
+	document.getElementById('param-flow-vol').value = flow;
+	document.getElementById('param-bubbles-vol').value = bubbles;
+	document.getElementById('param-fluid-speed').value = speed;
+	document.getElementById('param-fluid-fusion').value = fusion;
+	document.getElementById('param-line-width').value = stdDev;
+	document.getElementById('param-attraction').value = attraction;
+	document.getElementById('param-wiggle').value = wiggle;
+}
+
+function setupSettingsUI() {
+	const trigger = document.getElementById('menu-trigger');
+	const panel = document.getElementById('settings-panel');
+
+	// メニュー開閉
+	trigger.addEventListener('click', (e) => {
+		e.stopPropagation();
+		panel.classList.toggle('open');
+	});
+
+	// 設定パネル内部タッチがキャンバスに伝播して物理シミュレーションを邪魔するのを防ぎます
+	panel.addEventListener('pointerdown', (e) => {
+		e.stopPropagation();
+	});
+	panel.addEventListener('pointermove', (e) => {
+		e.stopPropagation();
+	});
+	panel.addEventListener('pointerup', (e) => {
+		e.stopPropagation();
+	});
+
+	// パネル外タッチで閉じる
+	document.addEventListener('pointerdown', (e) => {
+		if (!panel.contains(e.target) && e.target !== trigger) {
+			panel.classList.remove('open');
+		}
+	});
+
+	// 各スライダー変更時のイベント
+	document.getElementById('param-ambient-vol').addEventListener('input', (e) => {
+		CONFIG.AUDIO.DRONE.VOLUME = parseFloat(e.target.value);
+		// 音響ゲインへ即時に滑らかに反映させます
+		updateAudioDroneDucking(pointer.active, true);
+		saveSettings();
+	});
+
+	document.getElementById('param-flow-vol').addEventListener('input', (e) => {
+		CONFIG.AUDIO.WATER_FLOW.MAX_VOLUME = parseFloat(e.target.value);
+		saveSettings();
+	});
+
+	document.getElementById('param-bubbles-vol').addEventListener('input', (e) => {
+		CONFIG.AUDIO.BUBBLE.MAX_VOLUME = parseFloat(e.target.value);
+		saveSettings();
+	});
+
+	document.getElementById('param-fluid-speed').addEventListener('input', (e) => {
+		const val = parseFloat(e.target.value);
+		CONFIG.AMOEBA.MAX_SPEED = val;
+		CONFIG.AMOEBA.PULSE_SPEED_MAX = 0.008 + val * 0.006;
+		CONFIG.AMOEBA.PULSE_SPEED_MIN = 0.003 + val * 0.003;
+		saveSettings();
+	});
+
+	document.getElementById('param-fluid-fusion').addEventListener('input', (e) => {
+		CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER = parseFloat(e.target.value);
+		saveSettings();
+	});
+
+	document.getElementById('param-line-width').addEventListener('input', (e) => {
+		const val = parseFloat(e.target.value);
+		document.getElementById('smooth-one-bit').querySelector('feGaussianBlur').setAttribute('stdDeviation', val);
+		saveSettings();
+	});
+
+	document.getElementById('param-attraction').addEventListener('input', (e) => {
+		CONFIG.POINTER.PULL_FORCE = parseFloat(e.target.value);
+		saveSettings();
+	});
+
+	document.getElementById('param-wiggle').addEventListener('input', (e) => {
+		CONFIG.AMOEBA.WIGGLE_SCALE = parseFloat(e.target.value);
+		saveSettings();
+	});
+
+	// デフォルトへのリセットイベント
+	document.getElementById('btn-reset').addEventListener('click', (e) => {
+		e.stopPropagation();
+
+		const defaults = {
+			ambientVol: 0.10,
+			flowVol: 0.030,
+			bubblesVol: 0.055,
+			fluidSpeed: 0.16,
+			fluidFusion: 1.5,
+			lineWidth: 8.0,
+			attraction: 0.22,
+			wiggle: 1.0
+		};
+
+		// CONFIG パラメータの復元
+		CONFIG.AUDIO.DRONE.VOLUME = defaults.ambientVol;
+		CONFIG.AUDIO.WATER_FLOW.MAX_VOLUME = defaults.flowVol;
+		CONFIG.AUDIO.BUBBLE.MAX_VOLUME = defaults.bubblesVol;
+
+		CONFIG.AMOEBA.MAX_SPEED = defaults.fluidSpeed;
+		CONFIG.AMOEBA.PULSE_SPEED_MAX = 0.008 + defaults.fluidSpeed * 0.006;
+		CONFIG.AMOEBA.PULSE_SPEED_MIN = 0.003 + defaults.fluidSpeed * 0.003;
+		CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER = defaults.fluidFusion;
+		CONFIG.POINTER.PULL_FORCE = defaults.attraction;
+		CONFIG.AMOEBA.WIGGLE_SCALE = defaults.wiggle;
+
+		// SVG フィルタの太さリセット
+		document.getElementById('smooth-one-bit').querySelector('feGaussianBlur').setAttribute('stdDeviation', defaults.lineWidth);
+
+		// スライダーと設定値の同期
+		syncSlidersToConfig(defaults);
+
+		// 音量ゲインへ即時反映
+		updateAudioDroneDucking(pointer.active, true);
+
+		// ローカルストレージに保存
+		saveSettings();
+	});
+}
+
 // --- 初期化 ---
 resizeCanvas();
 initBlobs();
+syncSlidersToConfig(); // デフォルト設定の同期
+loadSettings();        // ローカルストレージ設定のロード
+setupSettingsUI();     // UIイベント設定
 requestAnimationFrame(loop);
 
 // 数秒後に画面ヒントをフェードアウト

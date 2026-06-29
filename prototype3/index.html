@@ -58,6 +58,154 @@
 			line-height: 1.8;
 			width: 90%;
 		}
+
+		/* 控えめなメニュー起動ボタン: 質感のない極めて薄い半透明の丸 */
+		#menu-trigger {
+			position: absolute;
+			top: 24px;
+			right: 24px;
+			width: 32px;
+			height: 32px;
+			background: transparent;
+			border: 1px solid rgba(255, 255, 255, 0.12);
+			border-radius: 50%;
+			color: rgba(255, 255, 255, 0.25);
+			font-size: 10px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			cursor: pointer;
+			z-index: 100;
+			transition: all 0.4s ease;
+			outline: none;
+		}
+
+		#menu-trigger:hover,
+		#menu-trigger:active {
+			border-color: rgba(255, 255, 255, 0.35);
+			color: rgba(255, 255, 255, 0.6);
+		}
+
+		/* 設定パネル: 完全透明な背景に1px of 極細白線のみ、幅を250pxに拡張して操作性向上 */
+		#settings-panel {
+			position: absolute;
+			top: 72px;
+			right: 24px;
+			width: 250px;
+			background: rgba(0, 0, 0, 0.85); /* アメーバと重なった時の文字視認性のための超極薄黒 */
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			padding: 20px;
+			display: flex;
+			flex-direction: column;
+			gap: 20px;
+			z-index: 99;
+			opacity: 0;
+			pointer-events: none;
+			transform: translateY(-8px);
+			transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+			font-family: monospace;
+			color: rgba(255, 255, 255, 0.45);
+		}
+
+		#settings-panel.open {
+			opacity: 1;
+			pointer-events: auto;
+			transform: translateY(0);
+		}
+
+		.panel-section {
+			display: flex;
+			flex-direction: column;
+			gap: 14px;
+		}
+
+		.section-title {
+			font-size: 9px;
+			letter-spacing: 0.12em;
+			color: rgba(255, 255, 255, 0.25);
+			border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+			padding-bottom: 4px;
+			margin-bottom: 2px;
+		}
+
+		.slider-row {
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+		}
+
+		.slider-row label {
+			font-size: 9px;
+			letter-spacing: 0.08em;
+		}
+
+		/* スライダーの完全なカスタマイズ、余白と高さを増やしてタッチしやすく */
+		.slider-row input[type="range"] {
+			-webkit-appearance: none;
+			appearance: none;
+			width: 100%;
+			height: 2px;
+			background: rgba(255, 255, 255, 0.12);
+			outline: none;
+			margin: 10px 0;
+			padding: 4px 0; /* タッチターゲットの判定領域を広げる */
+			cursor: pointer;
+		}
+
+		/* Webkit (Chrome/Safari) 用つまみ: 指で掴みやすいようにサイズを 8px * 16px に拡大 */
+		.slider-row input[type="range"]::-webkit-slider-thumb {
+			-webkit-appearance: none;
+			appearance: none;
+			width: 8px;
+			height: 16px;
+			background: rgba(255, 255, 255, 0.5);
+			border: none;
+			cursor: ew-resize;
+			transition: background 0.2s ease;
+		}
+
+		.slider-row input[type="range"]::-webkit-slider-thumb:hover {
+			background: rgba(255, 255, 255, 0.85);
+		}
+
+		/* Firefox 用つまみ */
+		.slider-row input[type="range"]::-moz-range-thumb {
+			width: 8px;
+			height: 16px;
+			background: rgba(255, 255, 255, 0.5);
+			border: none;
+			border-radius: 0;
+			cursor: ew-resize;
+			transition: background 0.2s ease;
+		}
+
+		.slider-row input[type="range"]::-moz-range-thumb:hover {
+			background: rgba(255, 255, 255, 0.85);
+		}
+
+		/* リセットボタン: ワイヤーフレーム調のミニマムデザイン */
+		#btn-reset {
+			background: transparent;
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			color: rgba(255, 255, 255, 0.5);
+			font-family: monospace;
+			font-size: 9px;
+			letter-spacing: 0.1em;
+			padding: 8px 12px;
+			cursor: pointer;
+			transition: all 0.3s ease;
+			outline: none;
+			margin-top: 4px;
+			text-align: center;
+			width: 100%;
+		}
+
+		#btn-reset:hover,
+		#btn-reset:active {
+			border-color: rgba(255, 255, 255, 0.45);
+			color: rgba(255, 255, 255, 0.85);
+			background: rgba(255, 255, 255, 0.04);
+		}
 	</style>
 </head>
 
@@ -66,16 +214,65 @@
 	<div id="hint">
 		FLOATING AMY: RELAXATION<br>
 		<span style="font-size: 8px; opacity: 0.65;">
-			画面を優しくタッチして、流体のゆらぎをお楽しみください
+			画面を優しくタッチして、音と流体のゆらぎをお楽しみください
 		</span>
+	</div>
+
+	<!-- 控えめなメニュー起動ボタン -->
+	<button id="menu-trigger" aria-label="設定メニューを開く">●</button>
+
+	<!-- 超ミニマムな設定パネル -->
+	<div id="settings-panel">
+		<div class="panel-section">
+			<div class="section-title">SOUND</div>
+			<div class="slider-row">
+				<label>AMBIENT VOL</label>
+				<input type="range" id="param-ambient-vol" min="0" max="0.25" step="0.01">
+			</div>
+			<div class="slider-row">
+				<label>WATER FLOW</label>
+				<input type="range" id="param-flow-vol" min="0" max="0.10" step="0.005">
+			</div>
+			<div class="slider-row">
+				<label>BUBBLES VOL</label>
+				<input type="range" id="param-bubbles-vol" min="0" max="0.15" step="0.005">
+			</div>
+		</div>
+		<div class="panel-section">
+			<div class="section-title">FLUID & VISUAL</div>
+			<div class="slider-row">
+				<label>MOTION SPEED</label>
+				<input type="range" id="param-fluid-speed" min="0.05" max="2.0" step="0.05">
+			</div>
+			<div class="slider-row">
+				<label>FUSION RANGE</label>
+				<input type="range" id="param-fluid-fusion" min="0.8" max="4.0" step="0.1">
+			</div>
+			<div class="slider-row">
+				<label>LINE WIDTH</label>
+				<input type="range" id="param-line-width" min="4" max="25.0" step="0.5">
+			</div>
+			<div class="slider-row">
+				<label>ATTRACTION (TOUCH)</label>
+				<input type="range" id="param-attraction" min="0" max="0.80" step="0.02">
+			</div>
+			<div class="slider-row">
+				<label>WIGGLE (FLUID)</label>
+				<input type="range" id="param-wiggle" min="0" max="3.0" step="0.05">
+			</div>
+		</div>
+		
+		<!-- デフォルトへのリセットボタン -->
+		<button id="btn-reset">RESET TO DEFAULT</button>
 	</div>
 
 	<canvas id="canvas"></canvas>
 
 	<!-- 目に優しく、完璧にアンチエイリアスの効いた滑らかな輪郭線を生成するSVGフィルタ -->
+	<!-- 線の太さ(LINE WIDTH=25)の巨大化に対応するため、フィルタの描画クリッピング領域を x="-50%" y="-50%" width="200%" height="200%" へと拡張しています -->
 	<svg style="position: absolute; width: 0; height: 0; pointer-events: none;" aria-hidden="true">
 		<defs>
-			<filter id="smooth-one-bit" x="-20%" y="-20%" width="140%" height="140%">
+			<filter id="smooth-one-bit" x="-50%" y="-50%" width="200%" height="200%">
 				<!-- ぼかし量を調整し、滑らかなとろみと細さを両立します -->
 				<feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur" />
 

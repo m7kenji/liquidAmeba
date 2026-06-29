@@ -18,6 +18,10 @@ export const pointer = {
 	visualTargetRadius: CONFIG.POINTER.RADIUS,
 
 	update() {
+		// 最新の config 値を動的に同期します
+		this.radius = CONFIG.POINTER.RADIUS;
+		this.visualTargetRadius = CONFIG.POINTER.RADIUS;
+
 		if (this.active) {
 			this.vx = this.x - this.lastX;
 			this.vy = this.y - this.lastY;
@@ -134,12 +138,17 @@ export class Amoeba {
 	}
 
 	update(forceFields) {
-		this.time += this.pulseSpeed;
+		// ウネウネする変形スピードのみを WIGGLE_SCALE に完全に連動させます
+		this.time += this.pulseSpeed * CONFIG.AMOEBA.WIGGLE_SCALE;
 
-		// ゆるやかなランダム漂流
+		// 座標移動速度スケール（基準値 0.16 に対する比率）
+		const speedScale = CONFIG.AMOEBA.MAX_SPEED / 0.16;
+
+		// ゆるやかなランダム漂流（MOTION SPEED に同期して推進力もダイナミックに変調）
 		this.wanderAngle += (Math.random() - 0.5) * CONFIG.AMOEBA.WANDER_ANGLE_CHANGE;
-		this.vx += Math.cos(this.wanderAngle) * CONFIG.AMOEBA.WANDER_DRIFT;
-		this.vy += Math.sin(this.wanderAngle) * CONFIG.AMOEBA.WANDER_DRIFT;
+		const driftForce = CONFIG.AMOEBA.WANDER_DRIFT * speedScale;
+		this.vx += Math.cos(this.wanderAngle) * driftForce;
+		this.vy += Math.sin(this.wanderAngle) * driftForce;
 
 		let targetR = this.baseR;
 		let maxExpansion = 0;
@@ -236,7 +245,7 @@ export class Amoeba {
 		// --- 画面外へのはみ出し・境界回避 (マイルドな反発) ---
 		const margin = this.r * 0.5;
 		const buffer = CONFIG.AMOEBA.WALL_EDGE_BUFFER;
-		const force = CONFIG.AMOEBA.WALL_AVOID_FORCE;
+		const force = CONFIG.AMOEBA.WALL_AVOID_FORCE * speedScale;
 
 		if (this.x < margin + buffer) this.vx += force;
 		if (this.x > window.VIEW_WIDTH - margin - buffer) this.vx -= force;

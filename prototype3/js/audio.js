@@ -230,8 +230,9 @@ export function triggerAmebaBubble(xRatio) {
 
 /**
  * タッチ中に深海ドローンの音量を自動的に下げ（ダッキング）、離すとゆっくり復元します
+ * instant = true にすると、設定スライダー操作時などに即座に音量が反映されます
  */
-export function updateAudioDroneDucking(isPointerActive) {
+export function updateAudioDroneDucking(isPointerActive, instant = false) {
 	if (!droneGain || !audioCtx) return;
 
 	// タッチ時は音量を通常の40%に抑えて操作ASMRを浮かび上がらせます
@@ -239,6 +240,7 @@ export function updateAudioDroneDucking(isPointerActive) {
 		? CONFIG.AUDIO.DRONE.VOLUME * 0.4 
 		: CONFIG.AUDIO.DRONE.VOLUME;
 
-	// 0.3秒のディレイ（時定数）で滑らかに移行させます
-	droneGain.gain.setTargetAtTime(targetVolume, audioCtx.currentTime, 0.3);
+	// 通常は0.3秒かけて滑らかに移行させますが、即時反映時は0.03秒にします
+	const timeConstant = instant ? 0.03 : 0.3;
+	droneGain.gain.setTargetAtTime(targetVolume, audioCtx.currentTime, timeConstant);
 }
