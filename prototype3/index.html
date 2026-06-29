@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+	<title>1-bit Floating Amoeba - Relaxation Edition</title>
+	<style>
+		* {
+			box-sizing: border-box;
+			margin: 0;
+			padding: 0;
+			overflow: hidden;
+			user-select: none;
+			-webkit-user-select: none;
+			touch-action: none;
+		}
+
+		body,
+		html {
+			width: 100%;
+			height: 100%;
+			background-color: #000000;
+			position: relative;
+			cursor: grab;
+		}
+
+		body:active {
+			cursor: grabbing;
+		}
+
+		canvas {
+			position: absolute;
+			top: 0;
+			left: 0;
+			width: 100vw;
+			height: 100vh;
+			background: transparent;
+			/* ドット感（ピクセル）のない滑らかなバイリニア補間拡大 */
+			image-rendering: auto;
+			filter: url(#smooth-one-bit);
+		}
+
+		#hint {
+			position: absolute;
+			bottom: 40px;
+			left: 50%;
+			transform: translateX(-50%);
+			color: rgba(255, 255, 255, 0.22); /* 目に優しい低コントラスト配色 */
+			font-family: monospace;
+			font-size: 10px;
+			letter-spacing: 0.15em;
+			text-transform: uppercase;
+			pointer-events: none;
+			z-index: 10;
+			transition: opacity 1.2s ease;
+			text-align: center;
+			line-height: 1.8;
+			width: 90%;
+		}
+	</style>
+</head>
+
+<body>
+
+	<div id="hint">
+		FLOATING AMY: RELAXATION<br>
+		<span style="font-size: 8px; opacity: 0.65;">
+			画面を優しくタッチして、流体のゆらぎをお楽しみください
+		</span>
+	</div>
+
+	<canvas id="canvas"></canvas>
+
+	<!-- 目に優しく、完璧にアンチエイリアスの効いた滑らかな輪郭線を生成するSVGフィルタ -->
+	<svg style="position: absolute; width: 0; height: 0; pointer-events: none;" aria-hidden="true">
+		<defs>
+			<filter id="smooth-one-bit" x="-20%" y="-20%" width="140%" height="140%">
+				<!-- ぼかし量を調整し、滑らかなとろみと細さを両立します -->
+				<feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur" />
+
+				<!-- type="table" を用い、境界の両端に極めて緩やかなグラデーションを残してジャギーを防ぎます -->
+				<feComponentTransfer in="blur" result="outline">
+					<feFuncA type="table" tableValues="
+                    0 0 0 0 0 0 0 0.05 0.75 1.0 0.75 0.05 0 0 0 0 0 0" />
+				</feComponentTransfer>
+
+				<!-- 輪郭を白黒の目に刺さらない柔らかい輝度へマッピング -->
+				<feColorMatrix type="matrix" values="
+                0 0 0 0 0.95
+                0 0 0 0 0.95
+                0 0 0 0 0.95
+                0 0 0 1 0" in="outline" />
+			</filter>
+		</defs>
+	</svg>
+
+	<!-- メインのESモジュールスクリプトをロード -->
+	<script type="module" src="js/main.js"></script>
+
+</body>
+
+</html>

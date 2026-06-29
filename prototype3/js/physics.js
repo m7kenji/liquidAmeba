@@ -1,0 +1,264 @@
+import { CONFIG } from './config.js';
+
+/**
+ * 指のタッチ状態を表現するポインターオブジェクト
+ */
+export const pointer = {
+	x: -1000,
+	y: -1000,
+	active: false,
+
+	vx: 0,
+	vy: 0,
+	lastX: 0,
+	lastY: 0,
+
+	radius: CONFIG.POINTER.RADIUS,
+	visualRadius: 0,
+	visualTargetRadius: CONFIG.POINTER.RADIUS,
+
+	update() {
+		if (this.active) {
+			this.vx = this.x - this.lastX;
+			this.vy = this.y - this.lastY;
+			this.lastX = this.x;
+			this.lastY = this.y;
+
+			// 心地よく「すーっ」と円が膨らむ
+			this.visualRadius += (this.visualTargetRadius - this.visualRadius) * CONFIG.POINTER.EXPAND_EASING;
+		} else {
+			this.vx = 0;
+			this.vy = 0;
+			// 心地よく「すーっ」と消えていく
+			this.visualRadius += (0 - this.visualRadius) * CONFIG.POINTER.SHRINK_EASING;
+		}
+	}
+};
+
+/**
+ * 指を離した瞬間にその場に残る、見えない穏やかな熱源（力場）
+ */
+export class ForceField {
+	constructor(x, y, vx, vy) {
+		this.x = x;
+		this.y = y;
+
+		// 運動量の継承はマイルドに減衰させます
+		this.vx = vx * CONFIG.FORCE_FIELD.VELOCITY_INHERITANCE;
+		this.vy = vy * CONFIG.FORCE_FIELD.VELOCITY_INHERITANCE;
+
+		this.life = 1.0;
+		this.decay = CONFIG.FORCE_FIELD.DECAY;
+
+		this.radius = CONFIG.FORCE_FIELD.INITIAL_RADIUS;
+		this.maxRadius = CONFIG.FORCE_FIELD.MAX_RADIUS;
+
+		this.pullStrength = CONFIG.FORCE_FIELD.PULL_STRENGTH;
+		this.flowStrength = CONFIG.FORCE_FIELD.FLOW_STRENGTH;
+
+		// 描画用のフェードアウト寿命
+		this.visualLife = 1.0;
+		this.visualDecay = CONFIG.FORCE_FIELD.VISUAL_DECAY;
+
+		this.visualRadius = CONFIG.FORCE_FIELD.INITIAL_VISUAL_RADIUS;
+		this.visualMaxRadius = CONFIG.FORCE_FIELD.MAX_VISUAL_RADIUS;
+	}
+
+	update() {
+		this.life -= this.decay;
+		this.visualLife -= this.visualDecay;
+
+		// 半径を緩やかに拡張
+		this.radius += (this.maxRadius - this.radius) * CONFIG.FORCE_FIELD.RADIUS_GROWTH;
+		this.visualRadius += (this.visualMaxRadius - this.visualRadius) * CONFIG.FORCE_FIELD.VISUAL_RADIUS_GROWTH;
+	}
+
+	applyTo(blob) {
+		if (this.life <= 0) return;
+
+		const dx = this.x - blob.x;
+		const dy = this.y - blob.y;
+		const dist = Math.hypot(dx, dy);
+
+		if (dist <= 0 || dist > this.radius) return;
+
+		// 安全対策の Math.max クランプ
+		const pct = Math.max(0, 1 - dist / this.radius);
+		const ease = pct * pct * (3 - 2 * pct);
+		const power = ease * this.life;
+
+		// 中心へ引き寄せる力と、指の流れの伝播
+		blob.vx += (dx / dist) * this.pullStrength * power;
+		blob.vy += (dy / dist) * this.pullStrength * power;
+
+		blob.vx += this.vx * this.flowStrength * power;
+		blob.vy += this.vy * this.flowStrength * power;
+	}
+
+	get alive() {
+		return this.life > 0 || this.visualLife > 0;
+	}
+}
+
+/**
+ * ぬるぬると動き、融合するアメーバの物理計算クラス
+ */
+export class Amoeba {
+	constructor(x, y, r, index, allBlobsRef) {
+		this.x = x;
+		this.y = y;
+		this.baseR = r;
+		this.r = r;
+		this.index = index;
+
+		// 他の全アメーバへの参照（近接判定用）
+		this.allBlobs = allBlobsRef;
+
+		const initialAngle = Math.random() * Math.PI * 2;
+		const initialSpeed = 0.05 + Math.random() * 0.05;
+
+		this.vx = Math.cos(initialAngle) * initialSpeed;
+		this.vy = Math.sin(initialAngle) * initialSpeed;
+
+		this.wanderAngle = initialAngle;
+		this.time = Math.random() * 100;
+		this.pulseSpeed = CONFIG.AMOEBA.PULSE_SPEED_MIN + Math.random() * (CONFIG.AMOEBA.PULSE_SPEED_MAX - CONFIG.AMOEBA.PULSE_SPEED_MIN);
+
+		this.numPoints = Math.max(12, Math.floor(r * 0.6));
+
+		// アメーバ同士の接触状態（融合判定・将来の音響トリガー用）
+		this.nearBlobStates = new Map();
+
+		// 接触状態が変わった（融合・分裂した）瞬間に呼ばれるコールバック
+		this.onStateChange = null; // function(otherBlob, isJoined, xRatio)
+	}
+
+	update(forceFields) {
+		this.time += this.pulseSpeed;
+
+		// ゆるやかなランダム漂流
+		this.wanderAngle += (Math.random() - 0.5) * CONFIG.AMOEBA.WANDER_ANGLE_CHANGE;
+		this.vx += Math.cos(this.wanderAngle) * CONFIG.AMOEBA.WANDER_DRIFT;
+		this.vy += Math.sin(this.wanderAngle) * CONFIG.AMOEBA.WANDER_DRIFT;
+
+		let targetR = this.baseR;
+		let maxExpansion = 0;
+
+		// --- アメーバ同士の融合・膨張物理 ＆ 状態変化の検知 ---
+		this.allBlobs.forEach(other => {
+			if (other === this) return;
+
+			const dx = other.x - this.x;
+			const dy = other.y - this.y;
+			const dist = Math.hypot(dx, dy);
+			const combineRange = (this.baseR + other.baseR) * CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER;
+
+			if (dist < combineRange) {
+				// 【NaNバグ対策】 Math.max(0, ...) で確実に負数入力を排除します
+				const overlap = Math.max(0, 1 - (dist / combineRange));
+				const expansion = Math.pow(overlap, 1.4) * CONFIG.AMOEBA.FUSION_EXPANSION_RATE * this.baseR;
+
+				if (expansion > maxExpansion) {
+					maxExpansion = expansion;
+				}
+			}
+
+			// 音響トリガー用の近接状態変化検出 (しきい値はマイルドに1.35倍)
+			const contactRange = (this.baseR + other.baseR) * 1.35;
+			const wasNear = this.nearBlobStates.get(other) || false;
+			const isNear = dist < contactRange;
+
+			if (isNear !== wasNear) {
+				this.nearBlobStates.set(other, isNear);
+				// 重複呼び出し防止のため、配列のインデックスで片方のみからコールバックを実行
+				if (this.index < other.index && this.onStateChange) {
+					this.onStateChange(other, isNear, this.x);
+				}
+			}
+		});
+
+		targetR += maxExpansion;
+		this.r += (targetR - this.r) * 0.06;
+
+		// --- タッチポインターによる吸引物理 ---
+		let currentFriction = CONFIG.AMOEBA.DEFAULT_FRICTION;
+		let isBeingPulled = false;
+
+		if (pointer.active) {
+			const dx = pointer.x - this.x;
+			const dy = pointer.y - this.y;
+			const dist = Math.hypot(dx, dy);
+			const pullRange = pointer.radius * CONFIG.POINTER.PULL_RANGE_MULTIPLIER;
+
+			if (dist < pullRange) {
+				isBeingPulled = true;
+
+				// 【NaNバグ対策】 Math.max(0, ...) で確実に負数入力を排除します
+				const pct = Math.max(0, 1 - dist / pullRange);
+
+				if (dist > 1) {
+					const pullForce = Math.pow(pct, 2) * CONFIG.POINTER.PULL_FORCE;
+					this.vx += (dx / dist) * pullForce;
+					this.vy += (dy / dist) * pullForce;
+				}
+
+				// 指に近いほど摩擦力を強めてアメーバを指に吸い着かせます
+				currentFriction = CONFIG.AMOEBA.DEFAULT_FRICTION - (pct * CONFIG.POINTER.MAX_FRICTION_DECREASE);
+			}
+		}
+
+		// 残響力場（ForceField）の物理適用
+		forceFields.forEach(field => {
+			field.applyTo(this);
+		});
+
+		// 摩擦適用
+		this.vx *= currentFriction;
+		this.vy *= currentFriction;
+
+		const currentSpeed = Math.hypot(this.vx, this.vy);
+
+		// 指に引っ張られていない時のためのゆったりとした速度制限
+		if (!isBeingPulled) {
+			if (currentSpeed < CONFIG.AMOEBA.MIN_SPEED && currentSpeed > 0) {
+				this.vx = (this.vx / currentSpeed) * CONFIG.AMOEBA.MIN_SPEED;
+				this.vy = (this.vy / currentSpeed) * CONFIG.AMOEBA.MIN_SPEED;
+			} else if (currentSpeed > CONFIG.AMOEBA.MAX_SPEED) {
+				this.vx *= 0.90;
+				this.vy *= 0.90;
+			}
+		}
+
+		// 座標の更新
+		this.x += this.vx;
+		this.y += this.vy;
+
+		// --- 画面外へのはみ出し・境界回避 (マイルドな反発) ---
+		const margin = this.r * 0.5;
+		const buffer = CONFIG.AMOEBA.WALL_EDGE_BUFFER;
+		const force = CONFIG.AMOEBA.WALL_AVOID_FORCE;
+
+		if (this.x < margin + buffer) this.vx += force;
+		if (this.x > window.VIEW_WIDTH - margin - buffer) this.vx -= force;
+		if (this.y < margin + buffer) this.vy += force;
+		if (this.y > window.VIEW_HEIGHT - margin - buffer) this.vy -= force;
+
+		// 確実な境界クランプと跳ね返り
+		if (this.x < margin) {
+			this.x = margin;
+			this.vx *= -0.2;
+		}
+		if (this.x > window.VIEW_WIDTH - margin) {
+			this.x = window.VIEW_WIDTH - margin;
+			this.vx *= -0.2;
+		}
+		if (this.y < margin) {
+			this.y = margin;
+			this.vy *= -0.2;
+		}
+		if (this.y > window.VIEW_HEIGHT - margin) {
+			this.y = window.VIEW_HEIGHT - margin;
+			this.vy *= -0.2;
+		}
+	}
+}

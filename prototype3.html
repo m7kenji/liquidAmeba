@@ -480,7 +480,7 @@
 					const combineRange = (this.baseR + other.baseR) * 1.5;
 
 					if (dist < combineRange) {
-						const overlap = 1 - (dist / combineRange);
+						const overlap = Math.max(0, 1 - (dist / combineRange));
 						const expansion = Math.pow(overlap, 1.4) * 0.30 * this.baseR;
 
 						if (expansion > maxExpansion) {
@@ -518,7 +518,7 @@
 					if (dist < pullRange) {
 						isBeingPulled = true;
 
-						const pct = 1 - dist / pullRange;
+						const pct = Math.max(0, 1 - dist / pullRange);
 
 						if (dist > 1) {
 							const pullForce = Math.pow(pct, 2) * 0.22;
