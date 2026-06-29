@@ -135,6 +135,10 @@ export class Amoeba {
 
 		// 接触状態が変わった（融合・分裂した）瞬間に呼ばれるコールバック
 		this.onStateChange = null; // function(otherBlob, isJoined, xRatio)
+
+		// 簡易ラバランプ（対流）物理用
+		this.temperature = Math.random(); // 0.0〜1.0 の初期温度
+		this.targetTemperature = Math.random() > 0.5 ? 1.0 : 0.0; // 加熱中(1.0)か冷却中(0.0)かの目標温度
 	}
 
 	update(forceFields) {
@@ -149,6 +153,35 @@ export class Amoeba {
 		const driftForce = CONFIG.AMOEBA.WANDER_DRIFT * speedScale;
 		this.vx += Math.cos(this.wanderAngle) * driftForce;
 		this.vy += Math.sin(this.wanderAngle) * driftForce;
+
+		// --- アプローチ①：S字ローリング（蛇行上昇/下降） ---
+		// アメーバ自身の脈動時間（this.time）に同期したサイン波により、ゆったりと左右に蛇行させます
+		const rollingForce = Math.sin(this.time * 0.6) * 0.025 * speedScale;
+		this.vx += rollingForce;
+
+		// --- アプローチ②：深海潮汐（グローバルな深海水流） ---
+		// Date.now()を用いた超低周波（約35秒周期）のグローバルな潮の満ち引きで、全体をゆっくり押し流します
+		const currentForce = Math.sin(Date.now() * 0.00018) * 0.012 * speedScale;
+		this.vx += currentForce;
+
+		// --- 簡易ラバランプ（熱対流）物理 ---
+		// ヒステリシス（履歴制御）: 画面中段でのスタックを防ぎ、上端と下端の完全な循環往復を保証します
+		// 画面の最下部（下から20%以内）に達した時に「加熱モード（目標 1.0）」へ移行
+		if (this.y > window.VIEW_HEIGHT * 0.8) {
+			this.targetTemperature = 1.0;
+		}
+		// 画面の最上部（上から20%以内）に達した時に「冷却モード（目標 0.0）」へ移行
+		else if (this.y < window.VIEW_HEIGHT * 0.2) {
+			this.targetTemperature = 0.0;
+		}
+		// 中間領域を移動している間は、上昇・下降の状態をそのまま維持し続けます
+
+		// じわじわと現在の温度が目標温度へ追従変化
+		this.temperature += (this.targetTemperature - this.temperature) * 0.005;
+
+		// 温度に応じた上下の浮力・重力を発生（速度スケールに連動、中央で最も交差しやすくなる強さに調整）
+		const convectionForce = (this.temperature - 0.5) * -0.012 * speedScale;
+		this.vy += convectionForce;
 
 		let targetR = this.baseR;
 		let maxExpansion = 0;
