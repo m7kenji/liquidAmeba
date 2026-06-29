@@ -89,6 +89,12 @@ function draw() {
 	// Canvas のクリア（アメーバの外側を完全透明にします）
 	ctx.clearRect(0, 0, window.VIEW_WIDTH, window.VIEW_HEIGHT);
 
+	// フィルムグレイン（砂嵐）の乱数シードを毎フレーム変化させてアニメーションさせます
+	const noiseElement = document.getElementById('grain-noise');
+	if (noiseElement) {
+		noiseElement.setAttribute('seed', Math.floor(Math.random() * 10000));
+	}
+
 	// 1. 力場の描画 (白)
 	ctx.fillStyle = '#ffffff';
 	forceFields.forEach(field => {
@@ -201,6 +207,19 @@ canvas.addEventListener('pointercancel', () => {
 
 const STORAGE_KEY = 'amy_relaxation_settings';
 
+// SVGフィルタのノイズ比率（ブレンド）を動的適用するヘルパー
+function applyGrainStrength(val) {
+	const blendElement = document.getElementById('grain-blend');
+	if (!blendElement) return;
+	// k1: 0 (乗算は不要)
+	// k2: noisyOutline (ノイズ画像) の強さ = val
+	// k3: outline (元アメーバのマスク) の強さ = 1.0 - val
+	// スライダーを0.0に絞り込むと完全にノイズが消えて元の滑らかな輪郭に戻り、
+	// 最大値に近づくほどざらざらとしたノイズへとリニアに置き換わります
+	blendElement.setAttribute('k2', val);
+	blendElement.setAttribute('k3', 1.0 - val);
+}
+
 function saveSettings() {
 	const settings = {
 		ambientVol: CONFIG.AUDIO.DRONE.VOLUME,
@@ -208,9 +227,11 @@ function saveSettings() {
 		bubblesVol: CONFIG.AUDIO.BUBBLE.MAX_VOLUME,
 		fluidSpeed: CONFIG.AMOEBA.MAX_SPEED,
 		fluidFusion: CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER,
-		lineWidth: parseFloat(document.getElementById('smooth-one-bit').querySelector('feGaussianBlur').getAttribute('stdDeviation')),
+		lineWidth: parseFloat(document.getElementById('base-blur').getAttribute('stdDeviation')),
 		attraction: CONFIG.POINTER.PULL_FORCE,
-		wiggle: CONFIG.AMOEBA.WIGGLE_SCALE
+		wiggle: CONFIG.AMOEBA.WIGGLE_SCALE,
+		grain: CONFIG.VISUAL.GRAIN_STRENGTH,
+		blur: CONFIG.VISUAL.BLUR
 	};
 	localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
@@ -235,10 +256,19 @@ function loadSettings() {
 		if (settings.fluidFusion !== undefined) CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER = settings.fluidFusion;
 		if (settings.attraction !== undefined) CONFIG.POINTER.PULL_FORCE = settings.attraction;
 		if (settings.wiggle !== undefined) CONFIG.AMOEBA.WIGGLE_SCALE = settings.wiggle;
+		if (settings.grain !== undefined) CONFIG.VISUAL.GRAIN_STRENGTH = settings.grain;
+		if (settings.blur !== undefined) CONFIG.VISUAL.BLUR = settings.blur;
 
 		if (settings.lineWidth !== undefined) {
-			document.getElementById('smooth-one-bit').querySelector('feGaussianBlur').setAttribute('stdDeviation', settings.lineWidth);
+			document.getElementById('base-blur').setAttribute('stdDeviation', settings.lineWidth);
 		}
+
+		if (settings.blur !== undefined) {
+			document.getElementById('outline-blur').setAttribute('stdDeviation', settings.blur);
+		}
+
+		// ノイズフィルタブレンドの即時反映
+		applyGrainStrength(CONFIG.VISUAL.GRAIN_STRENGTH);
 
 		syncSlidersToConfig(settings);
 	} catch (e) {
@@ -254,9 +284,14 @@ function syncSlidersToConfig(settings = {}) {
 	const fusion = settings.fluidFusion !== undefined ? settings.fluidFusion : CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER;
 	const attraction = settings.attraction !== undefined ? settings.attraction : CONFIG.POINTER.PULL_FORCE;
 	const wiggle = settings.wiggle !== undefined ? settings.wiggle : CONFIG.AMOEBA.WIGGLE_SCALE;
+	const grain = settings.grain !== undefined ? settings.grain : CONFIG.VISUAL.GRAIN_STRENGTH;
+	const blur = settings.blur !== undefined ? settings.blur : CONFIG.VISUAL.BLUR;
 
-	const filterElement = document.getElementById('smooth-one-bit').querySelector('feGaussianBlur');
-	const stdDev = settings.lineWidth !== undefined ? settings.lineWidth : parseFloat(filterElement.getAttribute('stdDeviation'));
+	const baseBlurElement = document.getElementById('base-blur');
+	const outlineBlurElement = document.getElementById('outline-blur');
+	
+	const stdDev = settings.lineWidth !== undefined ? settings.lineWidth : parseFloat(baseBlurElement.getAttribute('stdDeviation'));
+	const blurDev = settings.blur !== undefined ? settings.blur : parseFloat(outlineBlurElement.getAttribute('stdDeviation'));
 
 	document.getElementById('param-ambient-vol').value = ambient;
 	document.getElementById('param-flow-vol').value = flow;
@@ -264,8 +299,12 @@ function syncSlidersToConfig(settings = {}) {
 	document.getElementById('param-fluid-speed').value = speed;
 	document.getElementById('param-fluid-fusion').value = fusion;
 	document.getElementById('param-line-width').value = stdDev;
+	document.getElementById('param-blur').value = blurDev;
 	document.getElementById('param-attraction').value = attraction;
 	document.getElementById('param-wiggle').value = wiggle;
+	document.getElementById('param-grain').value = grain;
+
+	applyGrainStrength(grain);
 }
 
 function setupSettingsUI() {
@@ -329,7 +368,14 @@ function setupSettingsUI() {
 
 	document.getElementById('param-line-width').addEventListener('input', (e) => {
 		const val = parseFloat(e.target.value);
-		document.getElementById('smooth-one-bit').querySelector('feGaussianBlur').setAttribute('stdDeviation', val);
+		document.getElementById('base-blur').setAttribute('stdDeviation', val);
+		saveSettings();
+	});
+
+	document.getElementById('param-blur').addEventListener('input', (e) => {
+		const val = parseFloat(e.target.value);
+		CONFIG.VISUAL.BLUR = val;
+		document.getElementById('outline-blur').setAttribute('stdDeviation', val);
 		saveSettings();
 	});
 
@@ -340,6 +386,13 @@ function setupSettingsUI() {
 
 	document.getElementById('param-wiggle').addEventListener('input', (e) => {
 		CONFIG.AMOEBA.WIGGLE_SCALE = parseFloat(e.target.value);
+		saveSettings();
+	});
+
+	document.getElementById('param-grain').addEventListener('input', (e) => {
+		const val = parseFloat(e.target.value);
+		CONFIG.VISUAL.GRAIN_STRENGTH = val;
+		applyGrainStrength(val);
 		saveSettings();
 	});
 
@@ -354,8 +407,10 @@ function setupSettingsUI() {
 			fluidSpeed: 0.16,
 			fluidFusion: 1.5,
 			lineWidth: 8.0,
+			blur: 2.0,
 			attraction: 0.22,
-			wiggle: 1.0
+			wiggle: 1.0,
+			grain: 0.40
 		};
 
 		// CONFIG パラメータの復元
@@ -369,9 +424,13 @@ function setupSettingsUI() {
 		CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER = defaults.fluidFusion;
 		CONFIG.POINTER.PULL_FORCE = defaults.attraction;
 		CONFIG.AMOEBA.WIGGLE_SCALE = defaults.wiggle;
+		CONFIG.VISUAL.GRAIN_STRENGTH = defaults.grain;
+		CONFIG.VISUAL.BLUR = defaults.blur;
 
-		// SVG フィルタの太さリセット
-		document.getElementById('smooth-one-bit').querySelector('feGaussianBlur').setAttribute('stdDeviation', defaults.lineWidth);
+		// SVG フィルタの太さとノイズリセット
+		document.getElementById('base-blur').setAttribute('stdDeviation', defaults.lineWidth);
+		document.getElementById('outline-blur').setAttribute('stdDeviation', defaults.blur);
+		applyGrainStrength(defaults.grain);
 
 		// スライダーと設定値の同期
 		syncSlidersToConfig(defaults);

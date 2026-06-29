@@ -250,7 +250,11 @@
 			</div>
 			<div class="slider-row">
 				<label>LINE WIDTH</label>
-				<input type="range" id="param-line-width" min="4" max="25.0" step="0.5">
+				<input type="range" id="param-line-width" min="4" max="75.0" step="0.5">
+			</div>
+			<div class="slider-row">
+				<label>BLUR (SOFTNESS)</label>
+				<input type="range" id="param-blur" min="0" max="15.0" step="0.2">
 			</div>
 			<div class="slider-row">
 				<label>ATTRACTION (TOUCH)</label>
@@ -259,6 +263,10 @@
 			<div class="slider-row">
 				<label>WIGGLE (FLUID)</label>
 				<input type="range" id="param-wiggle" min="0" max="3.0" step="0.05">
+			</div>
+			<div class="slider-row">
+				<label>GRAIN (NOISE)</label>
+				<input type="range" id="param-grain" min="0" max="1.0" step="0.02">
 			</div>
 		</div>
 		
@@ -269,25 +277,44 @@
 	<canvas id="canvas"></canvas>
 
 	<!-- 目に優しく、完璧にアンチエイリアスの効いた滑らかな輪郭線を生成するSVGフィルタ -->
-	<!-- 線の太さ(LINE WIDTH=25)の巨大化に対応するため、フィルタの描画クリッピング領域を x="-50%" y="-50%" width="200%" height="200%" へと拡張しています -->
+	<!-- 線の太さ(LINE WIDTH=75)の巨大化に対応するため、フィルタの描画クリッピング領域を x="-100%" y="-100%" width="300%" height="300%" へと拡張しています -->
 	<svg style="position: absolute; width: 0; height: 0; pointer-events: none;" aria-hidden="true">
 		<defs>
-			<filter id="smooth-one-bit" x="-50%" y="-50%" width="200%" height="200%">
-				<!-- ぼかし量を調整し、滑らかなとろみと細さを両立します -->
-				<feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur" />
+			<filter id="smooth-one-bit" x="-100%" y="-100%" width="300%" height="300%">
+				<!-- 1. ぼかし量を調整し、アメーバ自体の太さ(LINE WIDTH)を決定します (STD値をJSから stdDeviation="4〜75" に変更) -->
+				<feGaussianBlur id="base-blur" in="SourceGraphic" stdDeviation="8" result="blur" />
 
-				<!-- type="table" を用い、境界の両端に極めて緩やかなグラデーションを残してジャギーを防ぎます -->
-				<feComponentTransfer in="blur" result="outline">
+				<!-- 2. type="table" を用い、境界の両端に極めて緩やかなグラデーションを残してジャギーを防ぎます -->
+				<feComponentTransfer in="blur" result="raw-outline">
 					<feFuncA type="table" tableValues="
                     0 0 0 0 0 0 0 0.05 0.75 1.0 0.75 0.05 0 0 0 0 0 0" />
 				</feComponentTransfer>
 
-				<!-- 輪郭を白黒の目に刺さらない柔らかい輝度へマッピング -->
+				<!-- 3. 【新段】輪郭線自体を柔らかくぼかす処理 (STD値をJSから stdDeviation="0〜15" に変更) -->
+				<feGaussianBlur id="outline-blur" in="raw-outline" stdDeviation="2.0" result="outline" />
+
+				<!-- 4. 高周波の砂嵐ノイズを生成 (粒度を従来の2倍粗くするために baseFrequency を 0.65 -> 0.30 に調整。seedは毎フレーム変化) -->
+				<feTurbulence id="grain-noise" type="fractalNoise" baseFrequency="0.30" numOctaves="1" result="noise" />
+
+				<!-- 5. ノイズの明度とコントラストをマイルドに調整 -->
+				<feColorMatrix type="matrix" values="
+					1 0 0 0 0
+					0 1 0 0 0
+					0 0 1 0 0
+					0 0 0 0.35 0.3" in="noise" result="brightNoise" />
+
+				<!-- 6. ぼかした輪郭(outline)の内側にのみノイズを重ねる (背景の黒は漆黒を維持) -->
+				<feComposite operator="in" in="brightNoise" in2="outline" result="noisyOutline" />
+
+				<!-- 7. 輪郭（outline）とノイズ付き輪郭（noisyOutline）を合成（ブレンド比率 k2, k3 を JS からリニアに同期します） -->
+				<feComposite id="grain-blend" operator="arithmetic" k1="0" k2="0.4" k3="0.6" k4="0" in="noisyOutline" in2="outline" result="finalComposite" />
+
+				<!-- 8. 最終的な柔らかい白に色をマッピング -->
 				<feColorMatrix type="matrix" values="
                 0 0 0 0 0.95
                 0 0 0 0 0.95
                 0 0 0 0 0.95
-                0 0 0 1 0" in="outline" />
+                0 0 0 1 0" in="finalComposite" />
 			</filter>
 		</defs>
 	</svg>

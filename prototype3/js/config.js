@@ -50,6 +50,12 @@ export const CONFIG = {
 		VISUAL_RADIUS_GROWTH: 0.04
 	},
 
+	// ビジュアルエフェクト
+	VISUAL: {
+		GRAIN_STRENGTH: 0.40, // アナログ砂嵐ノイズの強さ（0.0〜1.0）
+		BLUR: 2.0             // 輪郭線抽出後のぼかし・ソフトさ（0.0〜15.0）
+	},
+
 	// 音響合成（Web Audio API）パラメータ
 	AUDIO: {
 		DRONE: {
