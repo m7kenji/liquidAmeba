@@ -66,7 +66,7 @@
 	<div id="hint">
 		FLOATING AMY: RELAXATION<br>
 		<span style="font-size: 8px; opacity: 0.65;">
-			深海のように穏やかに揺蕩い、溶け合う流体
+			画面を優しくタッチして、音と流体のゆらぎをお楽しみください
 		</span>
 	</div>
 
@@ -79,7 +79,7 @@
 				<!-- ぼかし量を調整し、滑らかなとろみと細さを両立します -->
 				<feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur" />
 
-				<!-- 閾値テーブルの幅を狭めることで、アンチエイリアスを効かせたまま細い輪郭線にします -->
+				<!-- type="table" を用い、境界の両端に極めて緩やかなグラデーションを残してジャギーを防ぎます -->
 				<feComponentTransfer in="blur" result="outline">
 					<feFuncA type="table" tableValues="
                     0 0 0 0 0 0 0 0.05 0.75 1.0 0.75 0.05 0 0 0 0 0 0" />
@@ -97,25 +97,237 @@
 
 	<script>
 		const canvas = document.getElementById('canvas');
-		const ctx = canvas.getContext('2d');
+		const ctx = canvas.getContext('2d', { alpha: false });
+
+		// ==================================================
+		// AUDIO SYSTEM (Web Audio API Synthesis)
+		// ==================================================
+
+		let audioCtx = null;
+		let initializedAudio = false;
+
+		// ノード参照用
+		let droneFilter = null;
+		let droneGain = null;
+		let flowSource = null;
+		let flowFilter = null;
+		let flowGain = null;
+
+		// ブラウンノイズバッファ生成（深海底流用）
+		function createBrownNoiseBuffer() {
+			const sampleRate = audioCtx.sampleRate;
+			const bufferSize = sampleRate * 4; // 4秒分のループ波形
+			const buffer = audioCtx.createBuffer(1, bufferSize, sampleRate);
+			const data = buffer.getChannelData(0);
+			let lastOut = 0.0;
+
+			for (let i = 0; i < bufferSize; i++) {
+				const white = Math.random() * 2 - 1;
+				// 積分フィルタによるブラウンノイズ生成
+				data[i] = (lastOut + (0.02 * white)) / 1.02;
+				lastOut = data[i];
+				data[i] *= 4.0; // 音量ゲインの補正
+			}
+			return buffer;
+		}
+
+		// ピンクノイズバッファ生成（指による水流ASMR用）
+		function createPinkNoiseBuffer() {
+			const sampleRate = audioCtx.sampleRate;
+			const bufferSize = sampleRate * 4;
+			const buffer = audioCtx.createBuffer(1, bufferSize, sampleRate);
+			const data = buffer.getChannelData(0);
+			let b0, b1, b2, b3, b4, b5, b6;
+			b0 = b1 = b2 = b3 = b4 = b5 = b6 = 0.0;
+
+			for (let i = 0; i < bufferSize; i++) {
+				const white = Math.random() * 2 - 1;
+				b0 = 0.99886 * b0 + white * 0.0555179;
+				b1 = 0.99332 * b1 + white * 0.0750759;
+				b2 = 0.96900 * b2 + white * 0.1538520;
+				b3 = 0.86650 * b3 + white * 0.3104856;
+				b4 = 0.55000 * b4 + white * 0.5329522;
+				b5 = -0.7616 * b5 - white * 0.0168980;
+				data[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
+				data[i] *= 0.11;
+				b6 = white * 0.115926;
+			}
+			return buffer;
+		}
+
+		// 音響システムの初期化
+		function initAudio() {
+			if (initializedAudio) return;
+			initializedAudio = true;
+
+			const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+			audioCtx = new AudioContextClass();
+
+			setupDeepSeaDrone();
+			setupWaterFlowSound();
+		}
+
+		// タッチ時のオーディオ制限解除
+		function ensureAudioPlay() {
+			if (!audioCtx) {
+				initAudio();
+			}
+			if (audioCtx && audioCtx.state === 'suspended') {
+				audioCtx.resume();
+			}
+		}
+
+		// 1. 深海底流ドローンの構築
+		function setupDeepSeaDrone() {
+			const noiseSource = audioCtx.createBufferSource();
+			noiseSource.buffer = createBrownNoiseBuffer();
+			noiseSource.loop = true;
+
+			// 低周波サイン波による深い和音 (A1=55Hz ＆ E2=82.5Hz)
+			const osc1 = audioCtx.createOscillator();
+			const osc2 = audioCtx.createOscillator();
+			osc1.frequency.value = 55.0;
+			osc2.frequency.value = 82.5;
+			osc1.type = 'sine';
+			osc2.type = 'sine';
+
+			const oscGain1 = audioCtx.createGain();
+			const oscGain2 = audioCtx.createGain();
+			oscGain1.gain.value = 0.04; // 非常に微弱に鳴らす
+			oscGain2.gain.value = 0.02;
+			osc1.connect(oscGain1);
+			osc2.connect(oscGain2);
+
+			// ローパスフィルタで高音を丸める
+			droneFilter = audioCtx.createBiquadFilter();
+			droneFilter.type = 'lowpass';
+			droneFilter.frequency.value = 140;
+
+			// フェードイン用のゲインノード
+			droneGain = audioCtx.createGain();
+			droneGain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+			// 4秒かけてゆっくりフェードイン
+			droneGain.gain.exponentialRampToValueAtTime(0.24, audioCtx.currentTime + 4.0);
+
+			noiseSource.connect(droneFilter);
+			oscGain1.connect(droneFilter);
+			oscGain2.connect(droneFilter);
+			droneFilter.connect(droneGain);
+			droneGain.connect(audioCtx.destination);
+
+			// ドローン用超低速LFO（約66秒サイクルでフィルタの遮断周波数を穏やかに揺らし、潮の満ち引きを表現）
+			const lfo = audioCtx.createOscillator();
+			const lfoGain = audioCtx.createGain();
+			lfo.frequency.value = 0.015;
+			lfoGain.gain.value = 40; // 変動幅 ±40Hz
+
+			lfo.connect(lfoGain);
+			lfoGain.connect(droneFilter.frequency);
+
+			noiseSource.start(0);
+			osc1.start(0);
+			osc2.start(0);
+			lfo.start(0);
+		}
+
+		// 2. 指の動きに同期する水流音の構築
+		function setupWaterFlowSound() {
+			flowSource = audioCtx.createBufferSource();
+			flowSource.buffer = createPinkNoiseBuffer();
+			flowSource.loop = true;
+
+			// バンドパスフィルタで液体のうねり音を作る
+			flowFilter = audioCtx.createBiquadFilter();
+			flowFilter.type = 'bandpass';
+			flowFilter.Q.value = 1.8;
+			flowFilter.frequency.value = 120;
+
+			flowGain = audioCtx.createGain();
+			flowGain.gain.value = 0.001; // 最初は消音
+
+			flowSource.connect(flowFilter);
+			flowFilter.connect(flowGain);
+			flowGain.connect(audioCtx.destination);
+
+			flowSource.start(0);
+		}
+
+		function updateWaterFlowSound(speed) {
+			if (!flowGain || !audioCtx) return;
+
+			// 速度に緩やかに同期させて周波数と音量をイージング移動
+			const targetFreq = 120 + Math.min(speed * 280, 160);
+			const targetVolume = Math.min(speed * 0.14, 0.035); // ささやかな音量範囲
+
+			flowFilter.frequency.setTargetAtTime(targetFreq, audioCtx.currentTime, 0.12);
+			flowGain.gain.setTargetAtTime(targetVolume, audioCtx.currentTime, 0.20);
+		}
+
+		// 3. 水泡（Bubble）シンセシスとステレオパンニング
+		function playBubbleSound(xRatio) {
+			if (!audioCtx || audioCtx.state === 'suspended') return;
+
+			const osc = audioCtx.createOscillator();
+			const gain = audioCtx.createGain();
+			const filter = audioCtx.createBiquadFilter();
+			const panner = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
+
+			// リラックスに配慮したマイルドな低い周波数からのスイープ
+			const baseFreq = 75 + Math.random() * 55;
+			const endFreq = baseFreq * (1.6 + Math.random() * 0.3);
+			const duration = 0.10 + Math.random() * 0.06;
+
+			osc.type = 'sine';
+			osc.frequency.setValueAtTime(baseFreq, audioCtx.currentTime);
+			// 周波数の指数関数的な上昇（コポッという音響特性）
+			osc.frequency.exponentialRampToValueAtTime(endFreq, audioCtx.currentTime + duration);
+
+			// 音量エンベロープ
+			gain.gain.setValueAtTime(0.001, audioCtx.currentTime);
+			gain.gain.linearRampToValueAtTime(0.06, audioCtx.currentTime + 0.006);
+			gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+
+			// 耳障りな高音のトゲを排除する低周波ローパス
+			filter.type = 'lowpass';
+			filter.frequency.value = 260;
+
+			osc.connect(gain);
+			gain.connect(filter);
+
+			let dest = audioCtx.destination;
+			if (panner) {
+				// 画面上のX座標に応じたステレオ定位
+				const pan = (xRatio * 2 - 1) * 0.8;
+				panner.pan.setValueAtTime(pan, audioCtx.currentTime);
+				filter.connect(panner);
+				panner.connect(dest);
+			} else {
+				filter.connect(dest);
+			}
+
+			osc.start();
+			osc.stop(audioCtx.currentTime + duration + 0.05);
+		}
+
+		// 水泡音のトリガースロットリング（音が重なりすぎてリラックスを損なうのを防ぎます）
+		let lastBubbleTime = 0;
+		function triggerAmebaBubble(xRatio) {
+			const now = Date.now();
+			if (now - lastBubbleTime > 250) { // 最低250msの間隔
+				lastBubbleTime = now;
+				playBubbleSound(xRatio);
+			}
+		}
+
+		// ==================================================
+		// CONFIG
+		// ==================================================
 
 		// 640px高ベース。高解像度でのスムーズな補間と滑らかな挙動を両立します。
 		const BASE_HEIGHT = 640;
 
 		let VIEW_WIDTH = 360;
 		let VIEW_HEIGHT = BASE_HEIGHT;
-
-		function resizeCanvas() {
-			const aspect = window.innerWidth / window.innerHeight;
-
-			VIEW_HEIGHT = BASE_HEIGHT;
-			VIEW_WIDTH = Math.round(BASE_HEIGHT * aspect);
-
-			canvas.width = VIEW_WIDTH;
-			canvas.height = VIEW_HEIGHT;
-		}
-
-		resizeCanvas();
 
 		const pointer = {
 			x: -1000,
@@ -128,8 +340,6 @@
 			lastY: 0,
 
 			radius: 28, // 影響範囲を過度に広げずマイルドに
-
-			// 出現時の急激な変化を防ぐためのイージング用半径
 			visualRadius: 0,
 			visualTargetRadius: 28
 		};
@@ -157,7 +367,7 @@
 				this.pullStrength = 0.025;
 				this.flowStrength = 0.006;
 
-				// 視覚的な残響（波紋リングではなく、ぬるりと溶け出す熱源のフェードアウト）
+				// 視覚的な残響（ゆっくり溶け出す熱源のフェードアウト）
 				this.visualLife = 1.0;
 				this.visualDecay = 0.015;
 
@@ -169,7 +379,6 @@
 				this.life -= this.decay;
 				this.visualLife -= this.visualDecay;
 
-				// 力場は極めてゆっくりと広がる
 				this.radius += (this.maxRadius - this.radius) * 0.015;
 				this.visualRadius += (this.visualMaxRadius - this.visualRadius) * 0.04;
 			}
@@ -184,10 +393,9 @@
 				if (dist <= 0 || dist > this.radius) return;
 
 				const pct = 1 - dist / this.radius;
-				const ease = pct * pct * (3 - 2 * pct); // スムーズな力場勾配
+				const ease = pct * pct * (3 - 2 * pct);
 				const power = ease * this.life;
 
-				// 緩やかな吸引と流れの継承
 				blob.vx += (dx / dist) * this.pullStrength * power;
 				blob.vy += (dy / dist) * this.pullStrength * power;
 
@@ -202,7 +410,7 @@
 
 				context.save();
 
-				// グラデーションの不透明度を上げ、SVGフィルタ経由で「溶けるワイヤー」が可視化されるようにします
+				// ラジアルグラデーションによる柔らかい熱溜まり
 				const grad = context.createRadialGradient(
 					this.x, this.y, 0,
 					this.x, this.y, this.visualRadius
@@ -233,31 +441,33 @@
 				this.r = r;
 
 				const initialAngle = Math.random() * Math.PI * 2;
-				const initialSpeed = 0.05 + Math.random() * 0.05; // 動きを極めて遅く
+				const initialSpeed = 0.05 + Math.random() * 0.05;
 
 				this.vx = Math.cos(initialAngle) * initialSpeed;
 				this.vy = Math.sin(initialAngle) * initialSpeed;
 
 				this.wanderAngle = initialAngle;
-				this.currentAngle = initialAngle; // スムーズな角度遷移用の補間
+				this.currentAngle = initialAngle;
 
 				this.time = Math.random() * 100;
-				this.pulseSpeed = 0.006 + Math.random() * 0.008; // 呼吸リズムを非常に遅く
+				this.pulseSpeed = 0.006 + Math.random() * 0.008;
 
-				this.numPoints = Math.max(12, Math.floor(r * 0.6)); // 滑らかなベジェ曲線のために頂点数をやや増加
+				this.numPoints = Math.max(12, Math.floor(r * 0.6));
+
+				// 他のアメーバとの接触履歴（結合・ちぎれASMRトリガー検出用）
+				this.nearBlobStates = new Map();
 			}
 
 			update() {
 				this.time += this.pulseSpeed;
 
-				// --- 1. 自律的なふわふわ漂流 (方向変化を大幅にマイルドに) ---
 				this.wanderAngle += (Math.random() - 0.5) * 0.05;
 
-				const driftForce = 0.004; // ドリフト力を弱く
+				const driftForce = 0.004;
 				this.vx += Math.cos(this.wanderAngle) * driftForce;
 				this.vy += Math.sin(this.wanderAngle) * driftForce;
 
-				// --- 2. 近接時の融合・膨張ロジック ---
+				// --- 近接時の融合・膨張ロジック ＆ 結合・ちぎれイベント検出 ---
 				let targetR = this.baseR;
 				let maxExpansion = 0;
 
@@ -277,14 +487,26 @@
 							maxExpansion = expansion;
 						}
 					}
+
+					// 結合・分裂の判定（融合しきい値を1.35倍に設定）
+					const contactRange = (this.baseR + other.baseR) * 1.35;
+					const wasNear = this.nearBlobStates.get(other) || false;
+					const isNear = dist < contactRange;
+
+					if (isNear !== wasNear) {
+						this.nearBlobStates.set(other, isNear);
+						// 重複トリガーを防ぐため、インデックスの小さいAmoebaのみで音声をトリガー
+						if (blobs.indexOf(this) < blobs.indexOf(other)) {
+							triggerAmebaBubble(this.x / VIEW_WIDTH);
+						}
+					}
 				});
 
 				targetR += maxExpansion;
-				// ゆっくりと融合・分離時の半径を追従させ、粘性ととろみを強調
 				this.r += (targetR - this.r) * 0.06;
 
-				// --- 3. 指への緩やかな吸い付き ---
-				let currentFriction = 0.965; // 慣性を残してマイルドにするため摩擦を軽減
+				// --- 指への緩やかな吸い付き ---
+				let currentFriction = 0.965;
 				let isBeingPulled = false;
 
 				if (pointer.active) {
@@ -299,27 +521,22 @@
 						const pct = 1 - dist / pullRange;
 
 						if (dist > 1) {
-							// 吸引力を大幅に落とし、ぬるぬると引き寄せられるように
 							const pullForce = Math.pow(pct, 2) * 0.22;
 							this.vx += (dx / dist) * pullForce;
 							this.vy += (dy / dist) * pullForce;
 						}
 
-						// 中心付近の急な震えを抑えるブレーキ
 						currentFriction = 0.965 - (pct * 0.24);
 					}
 				}
 
-				// --- 3.5. 指を離したあとの力場 ---
 				forceFields.forEach(field => {
 					field.applyTo(this);
 				});
 
-				// 空間抵抗の適用
 				this.vx *= currentFriction;
 				this.vy *= currentFriction;
 
-				// --- 4. 速度レンジの制御 (ラバランプ的に超低速化) ---
 				const currentSpeed = Math.hypot(this.vx, this.vy);
 
 				if (!isBeingPulled) {
@@ -338,25 +555,16 @@
 				this.x += this.vx;
 				this.y += this.vy;
 
-				// --- 5. 境界回避 (反射ではなく、境界力場による滑らかな旋回) ---
+				// --- 境界回避 ---
 				const margin = this.r * 0.5;
 				const edgeBuffer = 35;
 				const wallForce = 0.008;
 
-				if (this.x < margin + edgeBuffer) {
-					this.vx += wallForce;
-				}
-				if (this.x > VIEW_WIDTH - margin - edgeBuffer) {
-					this.vx -= wallForce;
-				}
-				if (this.y < margin + edgeBuffer) {
-					this.vy += wallForce;
-				}
-				if (this.y > VIEW_HEIGHT - margin - edgeBuffer) {
-					this.vy -= wallForce;
-				}
+				if (this.x < margin + edgeBuffer) this.vx += wallForce;
+				if (this.x > VIEW_WIDTH - margin - edgeBuffer) this.vx -= wallForce;
+				if (this.y < margin + edgeBuffer) this.vy += wallForce;
+				if (this.y > VIEW_HEIGHT - margin - edgeBuffer) this.vy -= wallForce;
 
-				// 安全バウンド (ぬるりと押し戻す)
 				if (this.x < margin) {
 					this.x = margin;
 					this.vx *= -0.2;
@@ -382,7 +590,6 @@
 				for (let i = 0; i < this.numPoints; i++) {
 					const angle = (i / this.numPoints) * Math.PI * 2;
 
-					// 形状の変化を極めてマイルドにし、ぷるぷる感を徹底排除します
 					const pulse = Math.sin(this.time * 1.0 + angle * 3) * 0.04;
 					const wave = Math.cos(this.time * 0.4 - angle * 2) * 0.03;
 					const currentVertexR = this.r * (1 + pulse + wave);
@@ -394,24 +601,20 @@
 				}
 
 				context.beginPath();
-				// 最初の2点の中点から開始
 				let xc = (points[0].x + points[1].x) / 2;
 				let yc = (points[0].y + points[1].y) / 2;
 				context.moveTo(xc, yc);
 
-				// 2次ベジェスプライン曲線で全ての頂点を滑らかに結ぶ
 				for (let i = 1; i < this.numPoints - 1; i++) {
 					xc = (points[i].x + points[i+1].x) / 2;
 					yc = (points[i].y + points[i+1].y) / 2;
 					context.quadraticCurveTo(points[i].x, points[i].y, xc, yc);
 				}
 
-				// 最後の点と最初の点を結ぶ
 				xc = (points[this.numPoints - 1].x + points[0].x) / 2;
 				yc = (points[this.numPoints - 1].y + points[0].y) / 2;
 				context.quadraticCurveTo(points[this.numPoints - 1].x, points[this.numPoints - 1].y, xc, yc);
 
-				// 最初の開始位置に戻る
 				const firstMidX = (points[0].x + points[1].x) / 2;
 				const firstMidY = (points[0].y + points[1].y) / 2;
 				context.quadraticCurveTo(points[0].x, points[0].y, firstMidX, firstMidY);
@@ -450,18 +653,15 @@
 		function draw() {
 			ctx.clearRect(0, 0, VIEW_WIDTH, VIEW_HEIGHT);
 
-			// アメーバ本体と同等にマイルドに溶け合えるよう、力場を先に白で描画
 			ctx.fillStyle = '#ffffff';
 			forceFields.forEach(field => {
 				field.draw(ctx);
 			});
 
-			// アメーバ本体の描画
 			blobs.forEach(blob => {
 				blob.drawShape(ctx);
 			});
 
-			// タッチした指の存在（不透明度を上げ、アメーバにぬるりと融合するソフトな輪郭を浮かび上がらせます）
 			if (pointer.active || pointer.visualRadius > 0.5) {
 				ctx.save();
 				const grad = ctx.createRadialGradient(
@@ -481,22 +681,26 @@
 			}
 		}
 
-		function loop() {
+		function update() {
 			if (pointer.active) {
 				pointer.vx = pointer.x - pointer.lastX;
 				pointer.vy = pointer.y - pointer.lastY;
 				pointer.lastX = pointer.x;
 				pointer.lastY = pointer.y;
-			}
 
-			// 指の表示半径をさらに滑らかに膨張・収縮させます (優しく「すーっ」と宿るように)
-			if (pointer.active) {
-				pointer.visualRadius += (pointer.visualTargetRadius - pointer.visualRadius) * 0.10; // 0.15 -> 0.10
+				// 指の移動速度を水流 ASMR に反映
+				const speed = Math.hypot(pointer.vx, pointer.vy);
+				updateWaterFlowSound(speed);
 			} else {
-				pointer.visualRadius += (0 - pointer.visualRadius) * 0.08; // 0.12 -> 0.08
+				updateWaterFlowSound(0);
 			}
 
-			// 力場の更新と削除
+			if (pointer.active) {
+				pointer.visualRadius += (pointer.visualTargetRadius - pointer.visualRadius) * 0.10;
+			} else {
+				pointer.visualRadius += (0 - pointer.visualRadius) * 0.08;
+			}
+
 			for (let i = forceFields.length - 1; i >= 0; i--) {
 				forceFields[i].update();
 
@@ -506,9 +710,16 @@
 			}
 
 			blobs.forEach(blob => blob.update());
-			draw();
+		}
 
+		function loop(timestamp) {
 			requestAnimationFrame(loop);
+
+			if (timestamp - lastFrameTime < FRAME_INTERVAL) return;
+			lastFrameTime = timestamp;
+
+			update();
+			draw();
 		}
 
 		function getPointerPos(e) {
@@ -531,8 +742,13 @@
 			pointer.vx = 0;
 			pointer.vy = 0;
 
-			// 0からゆっくり膨らませることで、急なビジュアルの発生を防ぎます
 			pointer.visualRadius = 0;
+
+			// オーディオの制限解除とフェードイン起動
+			ensureAudioPlay();
+
+			// タッチ開始時の水泡トリガー
+			triggerAmebaBubble(pos.x / VIEW_WIDTH);
 
 			const hint = document.getElementById('hint');
 			if (hint) hint.style.opacity = '0';
@@ -540,6 +756,9 @@
 
 		canvas.addEventListener('pointermove', (e) => {
 			if (!pointer.active) return;
+
+			// タッチ中にオーディオがサスペンドされていた場合は復帰
+			ensureAudioPlay();
 
 			const pos = getPointerPos(e);
 			pointer.x = pos.x;
@@ -552,7 +771,6 @@
 			pointer.active = false;
 			canvas.releasePointerCapture(e.pointerId);
 
-			// 離した瞬間のスピードをマイルドにして周囲のアメーバへ伝播 (急加速を防ぐ)
 			blobs.forEach(blob => {
 				const dx = pointer.x - blob.x;
 				const dy = pointer.y - blob.y;
@@ -566,12 +784,14 @@
 				}
 			});
 
-			// スプラッシュ粒子などは一切生成せず、熱源力場のみをゆっくり残します
 			forceFields.push(new ForceField(pointer.x, pointer.y, pointer.vx, pointer.vy));
 
 			if (forceFields.length > 5) {
 				forceFields.shift();
 			}
+
+			// 指を離した瞬間の水泡トリガー
+			triggerAmebaBubble(pointer.x / VIEW_WIDTH);
 		});
 
 		canvas.addEventListener('pointercancel', () => {
@@ -584,14 +804,13 @@
 			}
 		});
 
-		loop();
+		requestAnimationFrame(loop);
 
 		setTimeout(() => {
 			const hint = document.getElementById('hint');
 			if (hint) hint.style.opacity = '0';
 		}, 5000);
 	</script>
-
 </body>
 
 </html>
