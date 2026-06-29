@@ -1,6 +1,7 @@
 import { CONFIG } from './config.js';
 import { pointer, ForceField, Amoeba } from './physics.js';
 import { drawAmoeba, drawForceField, drawPointer } from './renderer.js';
+import { ensureAudioPlay, updateWaterFlowSound, triggerAmebaBubble, updateAudioDroneDucking } from './audio.js';
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -22,9 +23,9 @@ function initBlobs() {
 
 		const blob = new Amoeba(x, y, r, i, blobs);
 		
-		// 音響トリガー用のダミーコールバック (フェーズ2でここに Audio モジュールを繋ぎます)
+		// アメーバの結合・ちぎれイベントに音響トリガーを連携
 		blob.onStateChange = (otherBlob, isJoined, xCoord) => {
-			// Phase 1 では無音のためログまたは何もしません
+			triggerAmebaBubble(xCoord / window.VIEW_WIDTH);
 		};
 
 		blobs.push(blob);
@@ -66,6 +67,15 @@ function update() {
 		if (!forceFields[i].alive) {
 			forceFields.splice(i, 1);
 		}
+	}
+
+	// 指の移動速度を水流音ASMRに同期し、ドローンの自動ダッキングを実行
+	updateAudioDroneDucking(pointer.active);
+	if (pointer.active) {
+		const speed = Math.hypot(pointer.vx, pointer.vy);
+		updateWaterFlowSound(speed);
+	} else {
+		updateWaterFlowSound(0);
 	}
 
 	// アメーバの物理更新
@@ -128,12 +138,21 @@ canvas.addEventListener('pointerdown', (e) => {
 
 	pointer.visualRadius = 0;
 
+	// オーディオ制限解除とフェードイン起動
+	ensureAudioPlay();
+	// タッチした瞬間の水泡音
+	triggerAmebaBubble(pos.x / window.VIEW_WIDTH);
+
 	const hint = document.getElementById('hint');
 	if (hint) hint.style.opacity = '0';
 });
 
 canvas.addEventListener('pointermove', (e) => {
 	if (!pointer.active) return;
+	
+	// タッチ移動中のサスペンド復帰
+	ensureAudioPlay();
+
 	const pos = getPointerPos(e);
 	pointer.x = pos.x;
 	pointer.y = pos.y;
@@ -163,6 +182,9 @@ canvas.addEventListener('pointerup', (e) => {
 	if (forceFields.length > 5) {
 		forceFields.shift();
 	}
+
+	// 指を離した瞬間の水泡音
+	triggerAmebaBubble(pointer.x / window.VIEW_WIDTH);
 });
 
 canvas.addEventListener('pointercancel', () => {
