@@ -18,7 +18,7 @@ export const CONFIG = {
 		MAX_SPEED: 0.16,
 		DEFAULT_FRICTION: 0.965,
 		FUSION_EXPANSION_RATE: 0.30,
-		FUSION_RANGE_MULTIPLIER: 1.5,
+		FUSION_RANGE_MULTIPLIER: 4.0,
 		WALL_AVOID_FORCE: 0.008,
 		WALL_EDGE_BUFFER: 35,
 		PULSE_SPEED_MIN: 0.006,
@@ -52,8 +52,7 @@ export const CONFIG = {
 
 	// ビジュアルエフェクト
 	VISUAL: {
-		GRAIN_STRENGTH: 0.40, // アナログ砂嵐ノイズの強さ（0.0〜1.0）
-		BLUR: 2.0             // 輪郭線抽出後のぼかし・ソフトさ（0.0〜15.0）
+		GRAIN_STRENGTH: 0.40 // アナログ砂嵐ノイズの強さ（0.0〜1.0）
 	},
 
 	// 音響合成（Web Audio API）パラメータ

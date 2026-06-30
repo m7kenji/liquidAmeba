@@ -245,16 +245,8 @@
 				<input type="range" id="param-fluid-speed" min="0.05" max="2.0" step="0.05">
 			</div>
 			<div class="slider-row">
-				<label>FUSION RANGE</label>
-				<input type="range" id="param-fluid-fusion" min="0.8" max="4.0" step="0.1">
-			</div>
-			<div class="slider-row">
 				<label>LINE WIDTH</label>
 				<input type="range" id="param-line-width" min="4" max="75.0" step="0.5">
-			</div>
-			<div class="slider-row">
-				<label>BLUR (SOFTNESS)</label>
-				<input type="range" id="param-blur" min="0" max="15.0" step="0.2">
 			</div>
 			<div class="slider-row">
 				<label>ATTRACTION (TOUCH)</label>
@@ -290,8 +282,8 @@
                     0 0 0 0 0 0 0 0.05 0.75 1.0 0.75 0.05 0 0 0 0 0 0" />
 				</feComponentTransfer>
 
-				<!-- 3. 【新段】輪郭線自体を柔らかくぼかす処理 (STD値をJSから stdDeviation="0〜15" に変更) -->
-				<feGaussianBlur id="outline-blur" in="raw-outline" stdDeviation="2.0" result="outline" />
+				<!-- 3. 【新段】輪郭線自体を柔らかくぼかす処理 (STD値をJSから stdDeviation="0〜15" に変更。デフォルトを0.0へ) -->
+				<feGaussianBlur id="outline-blur" in="raw-outline" stdDeviation="0.0" result="outline" />
 
 				<!-- 4. 高周波の砂嵐ノイズを生成 (粒度を従来の2倍粗くするために baseFrequency を 0.65 -> 0.30 に調整。seedは毎フレーム変化) -->
 				<feTurbulence id="grain-noise" type="fractalNoise" baseFrequency="0.30" numOctaves="1" result="noise" />

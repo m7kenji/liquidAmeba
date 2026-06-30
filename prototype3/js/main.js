@@ -226,12 +226,10 @@ function saveSettings() {
 		flowVol: CONFIG.AUDIO.WATER_FLOW.MAX_VOLUME,
 		bubblesVol: CONFIG.AUDIO.BUBBLE.MAX_VOLUME,
 		fluidSpeed: CONFIG.AMOEBA.MAX_SPEED,
-		fluidFusion: CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER,
 		lineWidth: parseFloat(document.getElementById('base-blur').getAttribute('stdDeviation')),
 		attraction: CONFIG.POINTER.PULL_FORCE,
 		wiggle: CONFIG.AMOEBA.WIGGLE_SCALE,
-		grain: CONFIG.VISUAL.GRAIN_STRENGTH,
-		blur: CONFIG.VISUAL.BLUR
+		grain: CONFIG.VISUAL.GRAIN_STRENGTH
 	};
 	localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
@@ -253,21 +251,18 @@ function loadSettings() {
 			CONFIG.AMOEBA.PULSE_SPEED_MIN = 0.003 + settings.fluidSpeed * 0.003;
 		}
 
-		if (settings.fluidFusion !== undefined) CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER = settings.fluidFusion;
 		if (settings.attraction !== undefined) CONFIG.POINTER.PULL_FORCE = settings.attraction;
 		if (settings.wiggle !== undefined) CONFIG.AMOEBA.WIGGLE_SCALE = settings.wiggle;
 		if (settings.grain !== undefined) CONFIG.VISUAL.GRAIN_STRENGTH = settings.grain;
-		if (settings.blur !== undefined) CONFIG.VISUAL.BLUR = settings.blur;
 
 		if (settings.lineWidth !== undefined) {
 			document.getElementById('base-blur').setAttribute('stdDeviation', settings.lineWidth);
 		}
 
-		if (settings.blur !== undefined) {
-			document.getElementById('outline-blur').setAttribute('stdDeviation', settings.blur);
-		}
+		// blurは0.0に固定
+		document.getElementById('outline-blur').setAttribute('stdDeviation', 0.0);
 
-		// ノイズフィルタブレンドの即時反映
+		// ノイズフィルタブレンド of 抽出の即時反映
 		applyGrainStrength(CONFIG.VISUAL.GRAIN_STRENGTH);
 
 		syncSlidersToConfig(settings);
@@ -281,25 +276,19 @@ function syncSlidersToConfig(settings = {}) {
 	const flow = settings.flowVol !== undefined ? settings.flowVol : CONFIG.AUDIO.WATER_FLOW.MAX_VOLUME;
 	const bubbles = settings.bubblesVol !== undefined ? settings.bubblesVol : CONFIG.AUDIO.BUBBLE.MAX_VOLUME;
 	const speed = settings.fluidSpeed !== undefined ? settings.fluidSpeed : CONFIG.AMOEBA.MAX_SPEED;
-	const fusion = settings.fluidFusion !== undefined ? settings.fluidFusion : CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER;
 	const attraction = settings.attraction !== undefined ? settings.attraction : CONFIG.POINTER.PULL_FORCE;
 	const wiggle = settings.wiggle !== undefined ? settings.wiggle : CONFIG.AMOEBA.WIGGLE_SCALE;
 	const grain = settings.grain !== undefined ? settings.grain : CONFIG.VISUAL.GRAIN_STRENGTH;
-	const blur = settings.blur !== undefined ? settings.blur : CONFIG.VISUAL.BLUR;
 
 	const baseBlurElement = document.getElementById('base-blur');
-	const outlineBlurElement = document.getElementById('outline-blur');
 	
 	const stdDev = settings.lineWidth !== undefined ? settings.lineWidth : parseFloat(baseBlurElement.getAttribute('stdDeviation'));
-	const blurDev = settings.blur !== undefined ? settings.blur : parseFloat(outlineBlurElement.getAttribute('stdDeviation'));
 
 	document.getElementById('param-ambient-vol').value = ambient;
 	document.getElementById('param-flow-vol').value = flow;
 	document.getElementById('param-bubbles-vol').value = bubbles;
 	document.getElementById('param-fluid-speed').value = speed;
-	document.getElementById('param-fluid-fusion').value = fusion;
 	document.getElementById('param-line-width').value = stdDev;
-	document.getElementById('param-blur').value = blurDev;
 	document.getElementById('param-attraction').value = attraction;
 	document.getElementById('param-wiggle').value = wiggle;
 	document.getElementById('param-grain').value = grain;
@@ -361,21 +350,9 @@ function setupSettingsUI() {
 		saveSettings();
 	});
 
-	document.getElementById('param-fluid-fusion').addEventListener('input', (e) => {
-		CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER = parseFloat(e.target.value);
-		saveSettings();
-	});
-
 	document.getElementById('param-line-width').addEventListener('input', (e) => {
 		const val = parseFloat(e.target.value);
 		document.getElementById('base-blur').setAttribute('stdDeviation', val);
-		saveSettings();
-	});
-
-	document.getElementById('param-blur').addEventListener('input', (e) => {
-		const val = parseFloat(e.target.value);
-		CONFIG.VISUAL.BLUR = val;
-		document.getElementById('outline-blur').setAttribute('stdDeviation', val);
 		saveSettings();
 	});
 
@@ -405,9 +382,7 @@ function setupSettingsUI() {
 			flowVol: 0.030,
 			bubblesVol: 0.055,
 			fluidSpeed: 0.16,
-			fluidFusion: 1.5,
 			lineWidth: 8.0,
-			blur: 2.0,
 			attraction: 0.22,
 			wiggle: 1.0,
 			grain: 0.40
@@ -421,15 +396,15 @@ function setupSettingsUI() {
 		CONFIG.AMOEBA.MAX_SPEED = defaults.fluidSpeed;
 		CONFIG.AMOEBA.PULSE_SPEED_MAX = 0.008 + defaults.fluidSpeed * 0.006;
 		CONFIG.AMOEBA.PULSE_SPEED_MIN = 0.003 + defaults.fluidSpeed * 0.003;
-		CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER = defaults.fluidFusion;
+		
+		CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER = 4.0; // 4.0固定
 		CONFIG.POINTER.PULL_FORCE = defaults.attraction;
 		CONFIG.AMOEBA.WIGGLE_SCALE = defaults.wiggle;
 		CONFIG.VISUAL.GRAIN_STRENGTH = defaults.grain;
-		CONFIG.VISUAL.BLUR = defaults.blur;
 
 		// SVG フィルタの太さとノイズリセット
 		document.getElementById('base-blur').setAttribute('stdDeviation', defaults.lineWidth);
-		document.getElementById('outline-blur').setAttribute('stdDeviation', defaults.blur);
+		document.getElementById('outline-blur').setAttribute('stdDeviation', 0.0);
 		applyGrainStrength(defaults.grain);
 
 		// スライダーと設定値の同期
