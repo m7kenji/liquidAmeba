@@ -81,5 +81,13 @@ export const CONFIG = {
 			THROTTLING_MS: 250,
 			PAN_WIDTH: 0.8
 		}
+	},
+
+	// 4段階設定のマッピング値 (0=完全OFF/極小、1=弱、2=中、3=強)
+	MAPS: {
+		SPEED: [0.0, 0.06, 0.16, 0.32],
+		LINE_WIDTH: [4.0, 10.0, 22.0, 55.0],
+		ATTRACTION: [0.0, 0.12, 0.35, 1.20],
+		GRAIN: [0.0, 0.16, 0.38, 0.65]
 	}
 };

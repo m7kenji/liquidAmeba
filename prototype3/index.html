@@ -5,6 +5,9 @@
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 	<title>1-bit Floating Amoeba - Relaxation Edition</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Tiny5&display=swap" rel="stylesheet">
 	<style>
 		* {
 			box-sizing: border-box;
@@ -14,6 +17,7 @@
 			user-select: none;
 			-webkit-user-select: none;
 			touch-action: none;
+			-webkit-tap-highlight-color: transparent; /* タップ時の水色ハイライトを無効化 */
 		}
 
 		body,
@@ -36,7 +40,6 @@
 			width: 100vw;
 			height: 100vh;
 			background: transparent;
-			/* ドット感（ピクセル）のない滑らかなバイリニア補間拡大 */
 			image-rendering: auto;
 			filter: url(#smooth-one-bit);
 		}
@@ -46,165 +49,282 @@
 			bottom: 40px;
 			left: 50%;
 			transform: translateX(-50%);
-			color: rgba(255, 255, 255, 0.22); /* 目に優しい低コントラスト配色 */
-			font-family: monospace;
-			font-size: 10px;
+			color: rgba(255, 255, 255, 0.35); /* 少し目立つ明るさに */
+			font-family: 'Tiny5', monospace;
+			font-size: 16px;
 			letter-spacing: 0.15em;
 			text-transform: uppercase;
 			pointer-events: none;
 			z-index: 10;
-			transition: opacity 1.2s ease;
 			text-align: center;
 			line-height: 1.8;
 			width: 90%;
 		}
 
-		/* 控えめなメニュー起動ボタン: 質感のない極めて薄い半透明の丸 */
+		/* 控えめなメニュー起動ボタン: 1-bitピクセルに沿った真四角の半透明ボタン */
 		#menu-trigger {
 			position: absolute;
 			top: 24px;
 			right: 24px;
-			width: 32px;
-			height: 32px;
+			width: 34px;
+			height: 34px;
 			background: transparent;
-			border: 1px solid rgba(255, 255, 255, 0.12);
-			border-radius: 50%;
-			color: rgba(255, 255, 255, 0.25);
-			font-size: 10px;
+			border: none; /* 枠線を完全に排除 */
+			border-radius: 0;
+			color: rgba(255, 255, 255, 0.75);
+			font-family: 'Tiny5', monospace;
+			font-size: 20px; /* 枠線がなくなった分、四角を少しだけ拡大 */
 			display: flex;
 			align-items: center;
 			justify-content: center;
 			cursor: pointer;
 			z-index: 100;
-			transition: all 0.4s ease;
 			outline: none;
+			opacity: 0.8; /* 通常時でも十分に視認できる明るさに調整 */
 		}
 
-		#menu-trigger:hover,
+		#menu-trigger:hover {
+			opacity: 1.0;
+			color: #ffffff;
+		}
+
 		#menu-trigger:active {
-			border-color: rgba(255, 255, 255, 0.35);
-			color: rgba(255, 255, 255, 0.6);
+			opacity: 1.0;
+			background: transparent; /* 白塗りは出さない */
+			color: #ffffff;
 		}
 
-		/* 設定パネル: 完全透明な背景に1px of 極細白線のみ、幅を250pxに拡張して操作性向上 */
+		#menu-trigger .active-glyph {
+			display: none;
+		}
+
+		#menu-trigger:active .normal {
+			display: none;
+		}
+
+		#menu-trigger:active .active-glyph {
+			display: inline;
+		}
+
+		/* 設定パネル: スマホ全画面オーバーレイ、PCでは中央のダイアログ */
 		#settings-panel {
 			position: absolute;
-			top: 72px;
-			right: 24px;
-			width: 250px;
-			background: rgba(0, 0, 0, 0.85); /* アメーバと重なった時の文字視認性のための超極薄黒 */
-			border: 1px solid rgba(255, 255, 255, 0.15);
-			padding: 20px;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			width: 100vw;
+			height: 100vh;
+			background-color: rgba(0, 0, 0, 0.45);
+			background-image: 
+				linear-gradient(45deg, rgba(0, 0, 0, 0.65) 25%, transparent 25%), 
+				linear-gradient(-45deg, rgba(0, 0, 0, 0.65) 25%, transparent 25%), 
+				linear-gradient(45deg, transparent 75%, rgba(0, 0, 0, 0.65) 75%), 
+				linear-gradient(-45deg, transparent 75%, rgba(0, 0, 0, 0.65) 75%);
+			background-size: 4px 4px;
+			background-position: 0 0, 0 2px, 2px -2px, -2px 0;
+			
+			border: none;
+			padding: 40px 24px env(safe-area-inset-bottom);
 			display: flex;
 			flex-direction: column;
-			gap: 20px;
+			gap: 0;
 			z-index: 99;
 			opacity: 0;
 			pointer-events: none;
-			transform: translateY(-8px);
-			transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
-			font-family: monospace;
-			color: rgba(255, 255, 255, 0.45);
+			transform: scale(0.96);
+			font-family: 'Tiny5', monospace;
+			color: rgba(255, 255, 255, 0.9);
 		}
 
 		#settings-panel.open {
 			opacity: 1;
 			pointer-events: auto;
-			transform: translateY(0);
+			transform: scale(1.0);
+		}
+
+		/* PC大画面用のメディアクエリ: のびのびを抑えて中央のレトロダイアログに */
+		@media (min-width: 600px) {
+			#settings-panel {
+				top: 50%;
+				left: 50%;
+				right: auto;
+				bottom: auto;
+				width: 380px;
+				height: auto;
+				max-height: 85vh;
+				background-color: rgba(0, 0, 0, 0.6);
+				border: 1px solid rgba(255, 255, 255, 0.35);
+				border-radius: 0;
+				box-shadow: 0 20px 40px rgba(0, 0, 0, 0.9);
+				transform: translate(-50%, -46%) scale(0.96);
+			}
+			#settings-panel.open {
+				transform: translate(-50%, -50%) scale(1.0);
+			}
+		}
+
+		.panel-header {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			padding-bottom: 16px;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+			margin-bottom: 20px;
+		}
+
+		.panel-title {
+			font-family: 'Tiny5', monospace;
+			font-size: 18px;
+			color: #ffffff;
+			font-weight: normal;
+			letter-spacing: 0.05em;
+		}
+
+		.panel-scroll-container {
+			flex: 1;
+			overflow-y: auto;
+			display: flex;
+			flex-direction: column;
+			gap: 28px;
+			padding-bottom: 24px;
+			-ms-overflow-style: none;
+			scrollbar-width: none;
+		}
+		.panel-scroll-container::-webkit-scrollbar {
+			display: none;
 		}
 
 		.panel-section {
 			display: flex;
 			flex-direction: column;
-			gap: 14px;
+			gap: 16px;
 		}
 
 		.section-title {
-			font-size: 9px;
-			letter-spacing: 0.12em;
-			color: rgba(255, 255, 255, 0.25);
-			border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-			padding-bottom: 4px;
-			margin-bottom: 2px;
+			font-family: 'Tiny5', monospace;
+			font-size: 13px;
+			letter-spacing: 0.05em;
+			color: rgba(255, 255, 255, 0.65);
+			border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+			padding-bottom: 6px;
+			margin-bottom: 4px;
+			font-weight: normal;
 		}
 
 		.slider-row {
 			display: flex;
 			flex-direction: column;
-			gap: 6px;
+			gap: 4px;
 		}
 
 		.slider-row label {
-			font-size: 9px;
-			letter-spacing: 0.08em;
+			font-family: 'Tiny5', monospace;
+			font-size: 12px;
+			letter-spacing: 0.05em;
+			color: rgba(255, 255, 255, 0.7);
 		}
 
-		/* スライダーの完全なカスタマイズ、余白と高さを増やしてタッチしやすく */
 		.slider-row input[type="range"] {
 			-webkit-appearance: none;
 			appearance: none;
 			width: 100%;
-			height: 2px;
-			background: rgba(255, 255, 255, 0.12);
+			height: 4px;
+			background: rgba(255, 255, 255, 0.16);
 			outline: none;
-			margin: 10px 0;
-			padding: 4px 0; /* タッチターゲットの判定領域を広げる */
+			margin: 14px 0;
 			cursor: pointer;
 		}
 
-		/* Webkit (Chrome/Safari) 用つまみ: 指で掴みやすいようにサイズを 8px * 16px に拡大 */
 		.slider-row input[type="range"]::-webkit-slider-thumb {
 			-webkit-appearance: none;
 			appearance: none;
-			width: 8px;
-			height: 16px;
-			background: rgba(255, 255, 255, 0.5);
-			border: none;
-			cursor: ew-resize;
-			transition: background 0.2s ease;
-		}
-
-		.slider-row input[type="range"]::-webkit-slider-thumb:hover {
-			background: rgba(255, 255, 255, 0.85);
-		}
-
-		/* Firefox 用つまみ */
-		.slider-row input[type="range"]::-moz-range-thumb {
-			width: 8px;
-			height: 16px;
-			background: rgba(255, 255, 255, 0.5);
-			border: none;
+			width: 14px;
+			height: 14px;
 			border-radius: 0;
+			background: #ffffff;
+			border: 1px solid rgba(255, 255, 255, 0.5);
 			cursor: ew-resize;
-			transition: background 0.2s ease;
 		}
 
-		.slider-row input[type="range"]::-moz-range-thumb:hover {
-			background: rgba(255, 255, 255, 0.85);
+		.slider-row input[type="range"]::-webkit-slider-thumb:active {
+			background: #ffffff;
+			box-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
 		}
 
-		/* リセットボタン: ワイヤーフレーム調のミニマムデザイン */
+		.slider-row input[type="range"]::-moz-range-thumb {
+			width: 14px;
+			height: 14px;
+			border-radius: 0;
+			background: #ffffff;
+			border: 1px solid rgba(255, 255, 255, 0.5);
+			cursor: ew-resize;
+		}
+
+		.button-row {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 16px;
+		}
+
+		.button-row label {
+			font-family: 'Tiny5', monospace;
+			font-size: 12px;
+			letter-spacing: 0.05em;
+			color: rgba(255, 255, 255, 0.7);
+		}
+
+		.gauge-btn {
+			background: transparent;
+			border: 1px solid rgba(255, 255, 255, 0.35);
+			color: rgba(255, 255, 255, 0.85);
+			font-family: 'Tiny5', monospace;
+			font-size: 16px;
+			letter-spacing: 0.1em;
+			height: 38px;
+			min-width: 90px;
+			text-align: center;
+			cursor: pointer;
+			outline: none;
+			border-radius: 0;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding-left: 0.1em;
+		}
+
+		.gauge-btn:active {
+			background: rgba(255, 255, 255, 0.7); /* 目に優しい透過ホワイト */
+			border-color: rgba(255, 255, 255, 0.7);
+			color: #000000;
+		}
+
+		/* リセットボタン: 完全なピクセルアート仕様へ */
 		#btn-reset {
 			background: transparent;
-			border: 1px solid rgba(255, 255, 255, 0.2);
-			color: rgba(255, 255, 255, 0.5);
-			font-family: monospace;
-			font-size: 9px;
-			letter-spacing: 0.1em;
-			padding: 8px 12px;
+			border: 1px solid rgba(255, 255, 255, 0.35);
+			color: rgba(255, 255, 255, 0.8);
+			font-family: 'Tiny5', monospace;
+			font-size: 14px;
+			letter-spacing: 0.05em;
+			height: 48px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
 			cursor: pointer;
-			transition: all 0.3s ease;
 			outline: none;
 			margin-top: 4px;
 			text-align: center;
 			width: 100%;
+			border-radius: 0;
 		}
 
 		#btn-reset:hover,
 		#btn-reset:active {
-			border-color: rgba(255, 255, 255, 0.45);
-			color: rgba(255, 255, 255, 0.85);
-			background: rgba(255, 255, 255, 0.04);
+			border-color: rgba(255, 255, 255, 0.7);
+			color: #000000;
+			background: rgba(255, 255, 255, 0.7); /* 目に優しい透過ホワイト */
 		}
 	</style>
 </head>
@@ -219,47 +339,58 @@
 	</div>
 
 	<!-- 控えめなメニュー起動ボタン -->
-	<button id="menu-trigger" aria-label="設定メニューを開く">●</button>
+	<button id="menu-trigger" aria-label="設定メニューを開く"><span class="normal">□</span><span class="active-glyph">■</span></button>
 
-	<!-- 超ミニマムな設定パネル -->
+	<!-- スマホ対応全画面設定パネル -->
 	<div id="settings-panel">
-		<div class="panel-section">
-			<div class="section-title">SOUND</div>
-			<div class="slider-row">
-				<label>AMBIENT VOL</label>
-				<input type="range" id="param-ambient-vol" min="0" max="0.25" step="0.01">
-			</div>
-			<div class="slider-row">
-				<label>WATER FLOW</label>
-				<input type="range" id="param-flow-vol" min="0" max="0.10" step="0.005">
-			</div>
-			<div class="slider-row">
-				<label>BUBBLES VOL</label>
-				<input type="range" id="param-bubbles-vol" min="0" max="0.15" step="0.005">
-			</div>
+		<div class="panel-header">
+			<span class="panel-title">SETTINGS</span>
 		</div>
-		<div class="panel-section">
-			<div class="section-title">FLUID & VISUAL</div>
-			<div class="slider-row">
-				<label>MOTION SPEED</label>
-				<input type="range" id="param-fluid-speed" min="0.05" max="2.0" step="0.05">
+
+		<div class="panel-scroll-container">
+			<div class="panel-section">
+				<div class="section-title">SOUND</div>
+				<div class="slider-row">
+					<label>AMBIENT VOL</label>
+					<input type="range" id="param-ambient-vol" min="0" max="0.25" step="0.01">
+				</div>
+				<div class="slider-row">
+					<label>WATER FLOW</label>
+					<input type="range" id="param-flow-vol" min="0" max="0.10" step="0.005">
+				</div>
+				<div class="slider-row">
+					<label>BUBBLES VOL</label>
+					<input type="range" id="param-bubbles-vol" min="0" max="0.15" step="0.005">
+				</div>
 			</div>
-			<div class="slider-row">
-				<label>LINE WIDTH</label>
-				<input type="range" id="param-line-width" min="4" max="75.0" step="0.5">
+
+			<div class="panel-section">
+				<div class="section-title">FLUID & VISUAL</div>
+				
+				<div class="button-row">
+					<label>MOTION SPEED</label>
+					<button class="gauge-btn" id="btn-speed" data-value="2">■■□</button>
+				</div>
+
+				<div class="button-row">
+					<label>LINE WIDTH</label>
+					<button class="gauge-btn" id="btn-line-width" data-value="2">■■□</button>
+				</div>
+
+				<div class="button-row">
+					<label>ATTRACTION (TOUCH)</label>
+					<button class="gauge-btn" id="btn-attraction" data-value="2">■■□</button>
+				</div>
+
+				<div class="button-row">
+					<label>GRAIN (NOISE)</label>
+					<button class="gauge-btn" id="btn-grain" data-value="2">■■□</button>
+				</div>
 			</div>
-			<div class="slider-row">
-				<label>ATTRACTION (TOUCH)</label>
-				<input type="range" id="param-attraction" min="0" max="1.80" step="0.05">
-			</div>
-			<div class="slider-row">
-				<label>GRAIN (NOISE)</label>
-				<input type="range" id="param-grain" min="0" max="1.0" step="0.02">
-			</div>
+			
+			<!-- デフォルトへのリセットボタン -->
+			<button id="btn-reset">RESET TO DEFAULT</button>
 		</div>
-		
-		<!-- デフォルトへのリセットボタン -->
-		<button id="btn-reset">RESET TO DEFAULT</button>
 	</div>
 
 	<canvas id="canvas"></canvas>

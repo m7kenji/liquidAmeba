@@ -60,6 +60,9 @@ function getPointerPos(e) {
 // --- 毎フレームの更新ロジック ---
 function update() {
 	pointer.update();
+	if (typeof updateInterpolations === 'function') {
+		updateInterpolations();
+	}
 
 	// 力場のライフ更新と削除
 	for (let i = forceFields.length - 1; i >= 0; i--) {
@@ -207,28 +210,126 @@ canvas.addEventListener('pointercancel', () => {
 
 const STORAGE_KEY = 'amy_relaxation_settings';
 
-// SVGフィルタのノイズ比率（ブレンド）を動的適用するヘルパー
-function applyGrainStrength(val) {
+// --- LINE WIDTH と GRAIN の滑らかな補間システム ---
+const interpolations = {
+	lineWidth: {
+		current: 22.0, // デフォルト初期値
+		target: 22.0
+	},
+	grain: {
+		current: 0.38,
+		target: 0.38
+	}
+};
+
+function applyActualLineWidth(val) {
+	const el = document.getElementById('base-blur');
+	if (el) el.setAttribute('stdDeviation', val);
+}
+
+function applyActualGrain(val) {
 	const blendElement = document.getElementById('grain-blend');
-	if (!blendElement) return;
-	// k1: 0 (乗算は不要)
-	// k2: noisyOutline (ノイズ画像) の強さ = val
-	// k3: outline (元アメーバのマスク) の強さ = 1.0 - val
-	// スライダーを0.0に絞り込むと完全にノイズが消えて元の滑らかな輪郭に戻り、
-	// 最大値に近づくほどざらざらとしたノイズへとリニアに置き換わります
-	blendElement.setAttribute('k2', val);
-	blendElement.setAttribute('k3', 1.0 - val);
+	if (blendElement) {
+		blendElement.setAttribute('k2', val);
+		blendElement.setAttribute('k3', 1.0 - val);
+	}
+}
+
+function updateInterpolations() {
+	// LINE WIDTH のイージング遷移（1フレームあたり 6% ずつ接近）
+	const lwDiff = interpolations.lineWidth.target - interpolations.lineWidth.current;
+	if (Math.abs(lwDiff) > 0.05) {
+		interpolations.lineWidth.current += lwDiff * 0.06;
+		applyActualLineWidth(interpolations.lineWidth.current);
+	} else if (interpolations.lineWidth.current !== interpolations.lineWidth.target) {
+		interpolations.lineWidth.current = interpolations.lineWidth.target;
+		applyActualLineWidth(interpolations.lineWidth.current);
+	}
+
+	// GRAIN のイージング遷移（1フレームあたり 6% ずつ接近）
+	const gDiff = interpolations.grain.target - interpolations.grain.current;
+	if (Math.abs(gDiff) > 0.002) {
+		interpolations.grain.current += gDiff * 0.06;
+		applyActualGrain(interpolations.grain.current);
+	} else if (interpolations.grain.current !== interpolations.grain.target) {
+		interpolations.grain.current = interpolations.grain.target;
+		applyActualGrain(interpolations.grain.current);
+	}
+}
+
+// SVGフィルタのノイズ比率（ブレンド）を動的適用するヘルパー（互換性維持用）
+function applyGrainStrength(val) {
+	applyActualGrain(val);
+}
+
+// 4段階設定の物理パラメータ適用処理（CONFIG.MAPS を参照）
+function applySpeedSetting(index) {
+	const val = CONFIG.MAPS.SPEED[index] !== undefined ? CONFIG.MAPS.SPEED[index] : 0.16;
+	CONFIG.AMOEBA.MAX_SPEED = val;
+	CONFIG.AMOEBA.PULSE_SPEED_MAX = 0.008 + val * 0.006;
+	CONFIG.AMOEBA.PULSE_SPEED_MIN = 0.003 + val * 0.003;
+}
+
+function applyLineWidthSetting(index) {
+	const val = CONFIG.MAPS.LINE_WIDTH[index] !== undefined ? CONFIG.MAPS.LINE_WIDTH[index] : 22.0;
+	interpolations.lineWidth.target = val;
+}
+
+function applyAttractionSetting(index) {
+	const val = CONFIG.MAPS.ATTRACTION[index] !== undefined ? CONFIG.MAPS.ATTRACTION[index] : 0.35;
+	CONFIG.POINTER.PULL_FORCE = val;
+}
+
+function applyGrainSetting(index) {
+	const val = CONFIG.MAPS.GRAIN[index] !== undefined ? CONFIG.MAPS.GRAIN[index] : 0.38;
+	CONFIG.VISUAL.GRAIN_STRENGTH = val;
+	interpolations.grain.target = val;
+}
+
+// ローテーション・ゲージボタン用の制御ロジック
+const GAUGE_GLYPHS = ['□□□', '■□□', '■■□', '■■■'];
+
+function updateGaugeButton(btnId, level) {
+	const btn = document.getElementById(btnId);
+	if (!btn) return;
+	btn.setAttribute('data-value', level);
+	btn.innerText = GAUGE_GLYPHS[level] || '□□□';
+}
+
+function getGaugeLevel(btnId) {
+	const btn = document.getElementById(btnId);
+	if (!btn) return 2; // デフォルト MEDIUM (2)
+	const val = parseInt(btn.getAttribute('data-value'), 10);
+	return isNaN(val) ? 2 : val;
+}
+
+function bindGaugeEvents(btnId, callback) {
+	const btn = document.getElementById(btnId);
+	if (!btn) return;
+	btn.addEventListener('click', (e) => {
+		e.stopPropagation();
+		const current = getGaugeLevel(btnId);
+		const next = (current + 1) % 4; // 0 -> 1 -> 2 -> 3 -> 0...
+		updateGaugeButton(btnId, next);
+		callback(next);
+		saveSettings();
+	});
 }
 
 function saveSettings() {
+	const speedIdx = getGaugeLevel('btn-speed');
+	const lineWidthIdx = getGaugeLevel('btn-line-width');
+	const attractionIdx = getGaugeLevel('btn-attraction');
+	const grainIdx = getGaugeLevel('btn-grain');
+
 	const settings = {
 		ambientVol: CONFIG.AUDIO.DRONE.VOLUME,
 		flowVol: CONFIG.AUDIO.WATER_FLOW.MAX_VOLUME,
 		bubblesVol: CONFIG.AUDIO.BUBBLE.MAX_VOLUME,
-		fluidSpeed: CONFIG.AMOEBA.MAX_SPEED,
-		lineWidth: parseFloat(document.getElementById('base-blur').getAttribute('stdDeviation')),
-		attraction: CONFIG.POINTER.PULL_FORCE,
-		grain: CONFIG.VISUAL.GRAIN_STRENGTH
+		speedIdx,
+		lineWidthIdx,
+		attractionIdx,
+		grainIdx
 	};
 	localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
@@ -236,7 +337,10 @@ function saveSettings() {
 function loadSettings() {
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
-		if (!raw) return;
+		if (!raw) {
+			syncSlidersToConfig();
+			return;
+		}
 
 		const settings = JSON.parse(raw);
 
@@ -244,29 +348,48 @@ function loadSettings() {
 		if (settings.flowVol !== undefined) CONFIG.AUDIO.WATER_FLOW.MAX_VOLUME = settings.flowVol;
 		if (settings.bubblesVol !== undefined) CONFIG.AUDIO.BUBBLE.MAX_VOLUME = settings.bubblesVol;
 
-		if (settings.fluidSpeed !== undefined) {
-			CONFIG.AMOEBA.MAX_SPEED = settings.fluidSpeed;
-			CONFIG.AMOEBA.PULSE_SPEED_MAX = 0.008 + settings.fluidSpeed * 0.006;
-			CONFIG.AMOEBA.PULSE_SPEED_MIN = 0.003 + settings.fluidSpeed * 0.003;
-		}
+		// 4段階インデックスの適用（旧データのマイグレーション対応含む）
+		const getFinalIdx = (val, map, defIdx) => {
+			if (val === undefined) return defIdx;
+			if (typeof val === 'number' && val >= 0 && val <= 3) return val;
+			let minDiff = Infinity;
+			let bestIdx = defIdx;
+			map.forEach((item, idx) => {
+				const diff = Math.abs(item - val);
+				if (diff < minDiff) {
+					minDiff = diff;
+					bestIdx = idx;
+				}
+			});
+			return bestIdx;
+		};
 
-		if (settings.attraction !== undefined) CONFIG.POINTER.PULL_FORCE = settings.attraction;
-		if (settings.grain !== undefined) CONFIG.VISUAL.GRAIN_STRENGTH = settings.grain;
+		const sIdx = getFinalIdx(settings.speedIdx !== undefined ? settings.speedIdx : settings.fluidSpeed, CONFIG.MAPS.SPEED, 2);
+		const lIdx = getFinalIdx(settings.lineWidthIdx !== undefined ? settings.lineWidthIdx : settings.lineWidth, CONFIG.MAPS.LINE_WIDTH, 2);
+		const aIdx = getFinalIdx(settings.attractionIdx !== undefined ? settings.attractionIdx : settings.attraction, CONFIG.MAPS.ATTRACTION, 2);
+		const gIdx = getFinalIdx(settings.grainIdx !== undefined ? settings.grainIdx : settings.grain, CONFIG.MAPS.GRAIN, 2);
+
+		applySpeedSetting(sIdx);
+		applyLineWidthSetting(lIdx);
+		applyAttractionSetting(aIdx);
+		applyGrainSetting(gIdx);
 
 		// WIGGLE_SCALEは1.0に固定
 		CONFIG.AMOEBA.WIGGLE_SCALE = 1.0;
 
-		if (settings.lineWidth !== undefined) {
-			document.getElementById('base-blur').setAttribute('stdDeviation', settings.lineWidth);
-		}
-
 		// blurは0.0に固定
-		document.getElementById('outline-blur').setAttribute('stdDeviation', 0.0);
+		const outlineBlur = document.getElementById('outline-blur');
+		if (outlineBlur) outlineBlur.setAttribute('stdDeviation', 0.0);
 
-		// ノイズフィルタブレンド of 抽出の即時反映
-		applyGrainStrength(CONFIG.VISUAL.GRAIN_STRENGTH);
-
-		syncSlidersToConfig(settings);
+		syncSlidersToConfig({
+			ambientVol: settings.ambientVol,
+			flowVol: settings.flowVol,
+			bubblesVol: settings.bubblesVol,
+			speedIdx: sIdx,
+			lineWidthIdx: lIdx,
+			attractionIdx: aIdx,
+			grainIdx: gIdx
+		});
 	} catch (e) {
 		console.error('Failed to load settings from storage', e);
 	}
@@ -276,23 +399,54 @@ function syncSlidersToConfig(settings = {}) {
 	const ambient = settings.ambientVol !== undefined ? settings.ambientVol : CONFIG.AUDIO.DRONE.VOLUME;
 	const flow = settings.flowVol !== undefined ? settings.flowVol : CONFIG.AUDIO.WATER_FLOW.MAX_VOLUME;
 	const bubbles = settings.bubblesVol !== undefined ? settings.bubblesVol : CONFIG.AUDIO.BUBBLE.MAX_VOLUME;
-	const speed = settings.fluidSpeed !== undefined ? settings.fluidSpeed : CONFIG.AMOEBA.MAX_SPEED;
-	const attraction = settings.attraction !== undefined ? settings.attraction : CONFIG.POINTER.PULL_FORCE;
-	const grain = settings.grain !== undefined ? settings.grain : CONFIG.VISUAL.GRAIN_STRENGTH;
 
-	const baseBlurElement = document.getElementById('base-blur');
-	
-	const stdDev = settings.lineWidth !== undefined ? settings.lineWidth : parseFloat(baseBlurElement.getAttribute('stdDeviation'));
+	const ambEl = document.getElementById('param-ambient-vol');
+	const flowEl = document.getElementById('param-flow-vol');
+	const bubEl = document.getElementById('param-bubbles-vol');
 
-	document.getElementById('param-ambient-vol').value = ambient;
-	document.getElementById('param-flow-vol').value = flow;
-	document.getElementById('param-bubbles-vol').value = bubbles;
-	document.getElementById('param-fluid-speed').value = speed;
-	document.getElementById('param-line-width').value = stdDev;
-	document.getElementById('param-attraction').value = attraction;
-	document.getElementById('param-grain').value = grain;
+	if (ambEl) ambEl.value = ambient;
+	if (flowEl) flowEl.value = flow;
+	if (bubEl) bubEl.value = bubbles;
 
-	applyGrainStrength(grain);
+	// ゲージボタンのアクティブ状態の同期
+	const getFinalIdx = (val, map, defIdx) => {
+		if (val === undefined) return defIdx;
+		if (typeof val === 'number' && val >= 0 && val <= 3) return val;
+		let minDiff = Infinity;
+		let bestIdx = defIdx;
+		map.forEach((item, idx) => {
+			const diff = Math.abs(item - val);
+			if (diff < minDiff) {
+				minDiff = diff;
+				bestIdx = idx;
+			}
+		});
+		return bestIdx;
+	};
+
+	const sIdx = getFinalIdx(settings.speedIdx !== undefined ? settings.speedIdx : settings.fluidSpeed, CONFIG.MAPS.SPEED, 2);
+	const lIdx = getFinalIdx(settings.lineWidthIdx !== undefined ? settings.lineWidthIdx : settings.lineWidth, CONFIG.MAPS.LINE_WIDTH, 2);
+	const aIdx = getFinalIdx(settings.attractionIdx !== undefined ? settings.attractionIdx : settings.attraction, CONFIG.MAPS.ATTRACTION, 2);
+	const gIdx = getFinalIdx(settings.grainIdx !== undefined ? settings.grainIdx : settings.grain, CONFIG.MAPS.GRAIN, 2);
+
+	updateGaugeButton('btn-speed', sIdx);
+	updateGaugeButton('btn-line-width', lIdx);
+	updateGaugeButton('btn-attraction', aIdx);
+	updateGaugeButton('btn-grain', gIdx);
+}
+
+function closeSettingsPanel() {
+	const panel = document.getElementById('settings-panel');
+	const trigger = document.getElementById('menu-trigger');
+	if (panel) panel.classList.remove('open');
+	if (trigger) {
+		const normalSpan = trigger.querySelector('.normal');
+		const activeSpan = trigger.querySelector('.active-glyph');
+		if (normalSpan && activeSpan) {
+			normalSpan.style.display = 'inline';
+			activeSpan.style.display = 'none';
+		}
+	}
 }
 
 function setupSettingsUI() {
@@ -300,15 +454,39 @@ function setupSettingsUI() {
 	const panel = document.getElementById('settings-panel');
 
 	// メニュー開閉
-	trigger.addEventListener('click', (e) => {
-		e.stopPropagation();
-		panel.classList.toggle('open');
-	});
+	if (trigger) {
+		trigger.addEventListener('click', (e) => {
+			e.stopPropagation();
+			const isOpen = panel.classList.toggle('open');
+			
+			// パネルの開閉状態に応じてトリガー表示を同期
+			const normalSpan = trigger.querySelector('.normal');
+			const activeSpan = trigger.querySelector('.active-glyph');
+			if (normalSpan && activeSpan) {
+				if (isOpen) {
+					normalSpan.style.display = 'none';
+					activeSpan.style.display = 'inline';
+				} else {
+					normalSpan.style.display = 'inline';
+					activeSpan.style.display = 'none';
+				}
+			}
+		});
+	}
 
 	// 設定パネル内部タッチがキャンバスに伝播して物理シミュレーションを邪魔するのを防ぎます
+	// ただし、インタラクティブ要素（スライダー・ボタン等）以外をタップした時はパネルを閉じます
 	panel.addEventListener('pointerdown', (e) => {
-		e.stopPropagation();
+		const isInteractive = e.target.closest('input[type="range"]') || 
+		                      e.target.closest('.gauge-btn') || 
+		                      e.target.closest('#btn-reset');
+		if (!isInteractive) {
+			closeSettingsPanel();
+		} else {
+			e.stopPropagation();
+		}
 	});
+
 	panel.addEventListener('pointermove', (e) => {
 		e.stopPropagation();
 	});
@@ -318,15 +496,14 @@ function setupSettingsUI() {
 
 	// パネル外タッチで閉じる
 	document.addEventListener('pointerdown', (e) => {
-		if (!panel.contains(e.target) && e.target !== trigger) {
-			panel.classList.remove('open');
+		if (panel && !panel.contains(e.target) && !trigger.contains(e.target)) {
+			closeSettingsPanel();
 		}
 	});
 
 	// 各スライダー変更時のイベント
 	document.getElementById('param-ambient-vol').addEventListener('input', (e) => {
 		CONFIG.AUDIO.DRONE.VOLUME = parseFloat(e.target.value);
-		// 音響ゲインへ即時に滑らかに反映させます
 		updateAudioDroneDucking(pointer.active, true);
 		saveSettings();
 	});
@@ -341,31 +518,11 @@ function setupSettingsUI() {
 		saveSettings();
 	});
 
-	document.getElementById('param-fluid-speed').addEventListener('input', (e) => {
-		const val = parseFloat(e.target.value);
-		CONFIG.AMOEBA.MAX_SPEED = val;
-		CONFIG.AMOEBA.PULSE_SPEED_MAX = 0.008 + val * 0.006;
-		CONFIG.AMOEBA.PULSE_SPEED_MIN = 0.003 + val * 0.003;
-		saveSettings();
-	});
-
-	document.getElementById('param-line-width').addEventListener('input', (e) => {
-		const val = parseFloat(e.target.value);
-		document.getElementById('base-blur').setAttribute('stdDeviation', val);
-		saveSettings();
-	});
-
-	document.getElementById('param-attraction').addEventListener('input', (e) => {
-		CONFIG.POINTER.PULL_FORCE = parseFloat(e.target.value);
-		saveSettings();
-	});
-
-	document.getElementById('param-grain').addEventListener('input', (e) => {
-		const val = parseFloat(e.target.value);
-		CONFIG.VISUAL.GRAIN_STRENGTH = val;
-		applyGrainStrength(val);
-		saveSettings();
-	});
+	// ゲージボタンのイベント紐付け
+	bindGaugeEvents('btn-speed', applySpeedSetting);
+	bindGaugeEvents('btn-line-width', applyLineWidthSetting);
+	bindGaugeEvents('btn-attraction', applyAttractionSetting);
+	bindGaugeEvents('btn-grain', applyGrainSetting);
 
 	// デフォルトへのリセットイベント
 	document.getElementById('btn-reset').addEventListener('click', (e) => {
@@ -375,10 +532,10 @@ function setupSettingsUI() {
 			ambientVol: 0.10,
 			flowVol: 0.030,
 			bubblesVol: 0.055,
-			fluidSpeed: 0.16,
-			lineWidth: 8.0,
-			attraction: 0.35,
-			grain: 0.40
+			speedIdx: 2,      // MEDIUM
+			lineWidthIdx: 2,  // MEDIUM (22.0)
+			attractionIdx: 2, // MEDIUM (0.35)
+			grainIdx: 2       // MEDIUM (0.38)
 		};
 
 		// CONFIG パラメータの復元
@@ -386,25 +543,22 @@ function setupSettingsUI() {
 		CONFIG.AUDIO.WATER_FLOW.MAX_VOLUME = defaults.flowVol;
 		CONFIG.AUDIO.BUBBLE.MAX_VOLUME = defaults.bubblesVol;
 
-		CONFIG.AMOEBA.MAX_SPEED = defaults.fluidSpeed;
-		CONFIG.AMOEBA.PULSE_SPEED_MAX = 0.008 + defaults.fluidSpeed * 0.006;
-		CONFIG.AMOEBA.PULSE_SPEED_MIN = 0.003 + defaults.fluidSpeed * 0.003;
-		
-		CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER = 4.0; // 4.0固定
-		CONFIG.POINTER.PULL_FORCE = defaults.attraction;
-		CONFIG.AMOEBA.WIGGLE_SCALE = 1.0; // 1.0固定
-		CONFIG.VISUAL.GRAIN_STRENGTH = defaults.grain;
+		applySpeedSetting(defaults.speedIdx);
+		applyLineWidthSetting(defaults.lineWidthIdx);
+		applyAttractionSetting(defaults.attractionIdx);
+		applyGrainSetting(defaults.grainIdx);
 
-		// SVG フィルタの太さとノイズリセット
-		document.getElementById('base-blur').setAttribute('stdDeviation', defaults.lineWidth);
-		document.getElementById('outline-blur').setAttribute('stdDeviation', 0.0);
-		applyGrainStrength(defaults.grain);
-
-		// スライダーと設定値の同期
-		syncSlidersToConfig(defaults);
+		// ボタン表示の更新
+		updateGaugeButton('btn-speed', defaults.speedIdx);
+		updateGaugeButton('btn-line-width', defaults.lineWidthIdx);
+		updateGaugeButton('btn-attraction', defaults.attractionIdx);
+		updateGaugeButton('btn-grain', defaults.grainIdx);
 
 		// 音量ゲインへ即時反映
 		updateAudioDroneDucking(pointer.active, true);
+
+		// スライダーと設定値の同期
+		syncSlidersToConfig(defaults);
 
 		// ローカルストレージに保存
 		saveSettings();
@@ -417,6 +571,15 @@ initBlobs();
 syncSlidersToConfig(); // デフォルト設定の同期
 loadSettings();        // ローカルストレージ設定のロード
 setupSettingsUI();     // UIイベント設定
+
+// 初期起動・初期ロード直後は補間の遅延なく即座に反映する
+if (typeof interpolations !== 'undefined') {
+	interpolations.lineWidth.current = interpolations.lineWidth.target;
+	interpolations.grain.current = interpolations.grain.target;
+	applyActualLineWidth(interpolations.lineWidth.current);
+	applyActualGrain(interpolations.grain.current);
+}
+
 requestAnimationFrame(loop);
 
 // 数秒後に画面ヒントをフェードアウト
