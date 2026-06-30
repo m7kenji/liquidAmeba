@@ -58,14 +58,14 @@ export const CONFIG = {
 	// 音響合成（Web Audio API）パラメータ
 	AUDIO: {
 		DRONE: {
-			VOLUME: 0.10,         // 0.24 -> 0.10 背景としての適度な音量へ
+			VOLUME: 0.20,         // 背景としての適度な音量へ引き上げ
 			FADE_IN_TIME: 4.0,
 			LFO_FREQ: 0.015,
 			LFO_GAIN: 30,          // 変動幅を少し抑えておだやかに
 			LOWPASS_FREQ: 90       // 140 -> 90Hz 超低域に特化させ、中域を空けます
 		},
 		WATER_FLOW: {
-			MAX_VOLUME: 0.030,     // 0.035 -> 0.030 
+			MAX_VOLUME: 0.10,     // 物理音量引き上げのため最大出力をアップ
 			BPF_Q: 2.4,            // 1.8 -> 2.4 摩擦音の存在感をクリアに
 			BASE_FREQ: 170,        // 120 -> 170Hz
 			FREQ_SPEED_MULTIPLIER: 220,
@@ -76,18 +76,47 @@ export const CONFIG = {
 			BASE_FREQ_RANDOM: 60,
 			DURATION_MIN: 0.10,
 			DURATION_RANDOM: 0.06,
-			MAX_VOLUME: 0.055,
+			MAX_VOLUME: 0.15,      // 泡音の出力を引き上げ
 			LOWPASS_FREQ: 520,     // 260 -> 520Hz 泡が弾けるぷつっとした高域アタック成分を微かに残します
 			THROTTLING_MS: 250,
 			PAN_WIDTH: 0.8
 		}
 	},
 
+	// Word Drift (漂う単語) 設定
+	WORD_DRIFT: {
+		RECENT_LIMIT: 10,
+		WORDS: [
+			'コップ', 'つくえ', 'カーテン', 'りんご', 'ボタン', 'もうふ', 'えんぴつ', 'しずく', 
+			'ココア', 'パン', 'ストロー', 'ハンカチ', 'ノート', 'ひきだし', 'あかり', 'きっぷ', 
+			'さとう', 'くも', 'まど', 'かみ', 'ふね', 'すな', 'てがみ', 'かぎ', 
+			'このは', 'かいがら', 'とけい', 'ほん', 'かげ', 'こいし', 'なみ', 'よぞら'
+		],
+		SETTINGS: {
+			1: { // GENTLE (ひかえめ)
+				MIN_INTERVAL: 40000, // 40秒
+				MAX_INTERVAL: 90000, // 90秒
+				FONT_SIZE: 48,       // 1.5倍に拡大 (32 -> 48)
+				SPEED_SCALE: 0.60,   // アメーバ最大速度に対する移動速度倍率
+				INFLUENCE: 0.12,    // アメーバから受ける物理影響力 (軌道吸着や減衰)
+				ALPHA: 0.70         // 描画時の最大アルファ値
+			},
+			2: { // NORMAL (ふつう)
+				MIN_INTERVAL: 20000, // 20秒
+				MAX_INTERVAL: 60000, // 60秒
+				FONT_SIZE: 68,       // 1.5倍に拡大 (45 -> 68)
+				SPEED_SCALE: 0.90,   // アメーバ最大速度に対する移動速度倍率
+				INFLUENCE: 0.30,
+				ALPHA: 0.90
+			}
+		}
+	},
+
 	// 4段階設定のマッピング値 (0=完全OFF/極小、1=弱、2=中、3=強)
 	MAPS: {
-		SPEED: [0.0, 0.06, 0.16, 0.32],
-		LINE_WIDTH: [4.0, 10.0, 22.0, 55.0],
-		ATTRACTION: [0.0, 0.12, 0.35, 1.20],
-		GRAIN: [0.0, 0.16, 0.38, 0.65]
+		SPEED: [0.0, 0.15, 0.45, 0.80],
+		LINE_WIDTH: [4.0, 10.0, 30.0, 60.0],
+		ATTRACTION: [0.0, 0.12, 0.35, 2.00],
+		GRAIN: [0.0, 0.20, 0.40, 0.80]
 	}
 };

@@ -2,6 +2,8 @@ import { CONFIG } from './config.js';
 import { pointer, ForceField, Amoeba } from './physics.js';
 import { drawAmoeba, drawForceField, drawPointer } from './renderer.js';
 import { ensureAudioPlay, updateWaterFlowSound, triggerAmebaBubble, updateAudioDroneDucking } from './audio.js';
+import { amebaConsole } from './console.js';
+import { WordDriftManager } from './wordDrift.js';
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -12,6 +14,13 @@ window.VIEW_HEIGHT = CONFIG.BASE_HEIGHT;
 
 const blobs = [];
 const forceFields = [];
+const wordDrift = new WordDriftManager();
+const track = {
+	x: 0,
+	y: 0,
+	r: 0,
+	initialized: false
+};
 
 // --- アメーバ群の初期生成 ---
 function initBlobs() {
@@ -26,6 +35,11 @@ function initBlobs() {
 		// アメーバの結合・ちぎれイベントに音響トリガーを連携
 		blob.onStateChange = (otherBlob, isJoined, xCoord) => {
 			triggerAmebaBubble(xCoord / window.VIEW_WIDTH);
+			if (isJoined) {
+				amebaConsole.log(`FUSION #${blob.index}+#${otherBlob.index}`);
+			} else {
+				amebaConsole.log(`MITOSIS #${blob.index}`);
+			}
 		};
 
 		blobs.push(blob);
@@ -60,6 +74,7 @@ function getPointerPos(e) {
 // --- 毎フレームの更新ロジック ---
 function update() {
 	pointer.update();
+	amebaConsole.update(blobs, pointer);
 	if (typeof updateInterpolations === 'function') {
 		updateInterpolations();
 	}
@@ -85,6 +100,60 @@ function update() {
 	blobs.forEach(blob => {
 		blob.update(forceFields);
 	});
+
+	// Word Drift (漂う単語) の物理・状態更新
+	wordDrift.update(window.VIEW_WIDTH, window.VIEW_HEIGHT, blobs);
+
+	// トラッキング解析枠の座標更新
+	updateTrackingFrame();
+}
+
+function updateTrackingFrame() {
+	const frameEl = document.getElementById('tracking-frame');
+	const consoleEnabled = getGaugeLevel('btn-console') === 1;
+
+	if (frameEl && consoleEnabled && blobs.length > 0 && amebaConsole && amebaConsole.focusIndex !== undefined) {
+		const fb = blobs[amebaConsole.focusIndex];
+		if (fb) {
+			// 位置（x, y）は即時（パッと）移動
+			track.x = fb.x;
+			track.y = fb.y;
+
+			// サイズ（r / 広がり）のみイージングで滑らかに追従
+			if (!track.initialized) {
+				track.r = fb.r;
+				track.initialized = true;
+			} else {
+				track.r += (fb.r - track.r) * 0.08;
+			}
+
+			const ratioX = window.innerWidth / window.VIEW_WIDTH;
+			const ratioY = window.innerHeight / window.VIEW_HEIGHT;
+
+			// アメーバの輪郭より少し大きめのゆとりのある枠にする (直径の約2.1倍)
+			const width = track.r * 2.1 * ratioX;
+			const height = track.r * 2.1 * ratioY;
+			const left = (track.x * ratioX) - (width / 2);
+			const top = (track.y * ratioY) - (height / 2);
+
+			frameEl.style.left = `${left}px`;
+			frameEl.style.top = `${top}px`;
+			frameEl.style.width = `${width}px`;
+			frameEl.style.height = `${height}px`;
+			frameEl.style.display = 'block';
+
+			const labelEl = frameEl.querySelector('.tracking-label');
+			if (labelEl) {
+				labelEl.textContent = `TRK ID #${String(amebaConsole.focusIndex).padStart(2, '0')} / SIZE: ${(fb.r * 1.5).toFixed(1)}MM`;
+			}
+		} else {
+			frameEl.style.display = 'none';
+			track.initialized = false;
+		}
+	} else if (frameEl) {
+		frameEl.style.display = 'none';
+		track.initialized = false;
+	}
 }
 
 // --- 毎フレームの描画ロジック ---
@@ -108,6 +177,9 @@ function draw() {
 	blobs.forEach(blob => {
 		drawAmoeba(ctx, blob);
 	});
+
+	// Word Drift (漂う単語) の描画 (白・SVGフィルタ適用下)
+	wordDrift.draw(ctx);
 
 	// 3. タッチの描画
 	drawPointer(ctx, pointer);
@@ -151,6 +223,7 @@ canvas.addEventListener('pointerdown', (e) => {
 	ensureAudioPlay();
 	// タッチした瞬間の水泡音
 	triggerAmebaBubble(pos.x / window.VIEW_WIDTH);
+	amebaConsole.log('POINTER ACTIVE');
 
 	const hint = document.getElementById('hint');
 	if (hint) hint.style.opacity = '0';
@@ -181,8 +254,9 @@ canvas.addEventListener('pointerup', (e) => {
 
 		if (dist < pointer.radius * 2.5) {
 			const influence = 1 - dist / (pointer.radius * 2.5);
-			blob.vx += pointer.vx * influence * 0.15;
-			blob.vy += pointer.vy * influence * 0.15;
+			const releaseInertia = CONFIG.POINTER.PULL_FORCE * 0.43; // ATTRACTIONと連動 (0.35 * 0.43 ≒ 0.15)
+			blob.vx += pointer.vx * influence * releaseInertia;
+			blob.vy += pointer.vy * influence * releaseInertia;
 		}
 	});
 
@@ -194,6 +268,7 @@ canvas.addEventListener('pointerup', (e) => {
 
 	// 指を離した瞬間の水泡音
 	triggerAmebaBubble(pointer.x / window.VIEW_WIDTH);
+	amebaConsole.log('POINTER RELEASED');
 });
 
 canvas.addEventListener('pointercancel', () => {
@@ -286,6 +361,15 @@ function applyGrainSetting(index) {
 	interpolations.grain.target = val;
 }
 
+function applyConsoleSetting(level) {
+	const enabled = level === 1;
+	amebaConsole.setEnabled(enabled);
+	// 初回呼び出し時や状態変更時にログを出力（enabledの時のみ）
+	if (enabled) {
+		amebaConsole.log('MONITOR ENBL');
+	}
+}
+
 // ローテーション・ゲージボタン用の制御ロジック
 const GAUGE_GLYPHS = ['□□□', '■□□', '■■□', '■■■'];
 
@@ -301,6 +385,14 @@ function getGaugeLevel(btnId) {
 	if (!btn) return 2; // デフォルト MEDIUM (2)
 	const val = parseInt(btn.getAttribute('data-value'), 10);
 	return isNaN(val) ? 2 : val;
+}
+
+const DRIFT_GLYPHS = ['OFF', 'GENTLE', 'NORMAL'];
+function updateDriftButton(level) {
+	const btn = document.getElementById('btn-word-drift');
+	if (!btn) return;
+	btn.setAttribute('data-value', level);
+	btn.innerText = DRIFT_GLYPHS[level] || 'GENTLE';
 }
 
 function bindGaugeEvents(btnId, callback) {
@@ -321,6 +413,9 @@ function saveSettings() {
 	const lineWidthIdx = getGaugeLevel('btn-line-width');
 	const attractionIdx = getGaugeLevel('btn-attraction');
 	const grainIdx = getGaugeLevel('btn-grain');
+	const consoleEnabled = getGaugeLevel('btn-console') === 1;
+	const driftBtn = document.getElementById('btn-word-drift');
+	const wordDriftLevel = driftBtn ? (parseInt(driftBtn.getAttribute('data-value'), 10) || 0) : 1;
 
 	const settings = {
 		ambientVol: CONFIG.AUDIO.DRONE.VOLUME,
@@ -329,7 +424,9 @@ function saveSettings() {
 		speedIdx,
 		lineWidthIdx,
 		attractionIdx,
-		grainIdx
+		grainIdx,
+		consoleEnabled,
+		wordDriftLevel
 	};
 	localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
@@ -368,11 +465,16 @@ function loadSettings() {
 		const lIdx = getFinalIdx(settings.lineWidthIdx !== undefined ? settings.lineWidthIdx : settings.lineWidth, CONFIG.MAPS.LINE_WIDTH, 2);
 		const aIdx = getFinalIdx(settings.attractionIdx !== undefined ? settings.attractionIdx : settings.attraction, CONFIG.MAPS.ATTRACTION, 2);
 		const gIdx = getFinalIdx(settings.grainIdx !== undefined ? settings.grainIdx : settings.grain, CONFIG.MAPS.GRAIN, 2);
+		const wdLevel = settings.wordDriftLevel !== undefined ? settings.wordDriftLevel : 1;
 
 		applySpeedSetting(sIdx);
 		applyLineWidthSetting(lIdx);
 		applyAttractionSetting(aIdx);
 		applyGrainSetting(gIdx);
+		wordDrift.setLevel(wdLevel);
+
+		const consoleEnabled = settings.consoleEnabled !== undefined ? settings.consoleEnabled : true;
+		applyConsoleSetting(consoleEnabled ? 1 : 0);
 
 		// WIGGLE_SCALEは1.0に固定
 		CONFIG.AMOEBA.WIGGLE_SCALE = 1.0;
@@ -388,10 +490,20 @@ function loadSettings() {
 			speedIdx: sIdx,
 			lineWidthIdx: lIdx,
 			attractionIdx: aIdx,
-			grainIdx: gIdx
+			grainIdx: gIdx,
+			consoleEnabled: consoleEnabled,
+			wordDriftLevel: wdLevel
 		});
 	} catch (e) {
 		console.error('Failed to load settings from storage', e);
+	}
+}
+
+function updateSliderValueDisplay(sliderId, val) {
+	const valId = sliderId.replace('param-', 'val-');
+	const el = document.getElementById(valId);
+	if (el) {
+		el.textContent = val.toFixed(2);
 	}
 }
 
@@ -407,6 +519,10 @@ function syncSlidersToConfig(settings = {}) {
 	if (ambEl) ambEl.value = ambient;
 	if (flowEl) flowEl.value = flow;
 	if (bubEl) bubEl.value = bubbles;
+
+	updateSliderValueDisplay('param-ambient-vol', ambient);
+	updateSliderValueDisplay('param-flow-vol', flow);
+	updateSliderValueDisplay('param-bubbles-vol', bubbles);
 
 	// ゲージボタンのアクティブ状態の同期
 	const getFinalIdx = (val, map, defIdx) => {
@@ -428,11 +544,21 @@ function syncSlidersToConfig(settings = {}) {
 	const lIdx = getFinalIdx(settings.lineWidthIdx !== undefined ? settings.lineWidthIdx : settings.lineWidth, CONFIG.MAPS.LINE_WIDTH, 2);
 	const aIdx = getFinalIdx(settings.attractionIdx !== undefined ? settings.attractionIdx : settings.attraction, CONFIG.MAPS.ATTRACTION, 2);
 	const gIdx = getFinalIdx(settings.grainIdx !== undefined ? settings.grainIdx : settings.grain, CONFIG.MAPS.GRAIN, 2);
+	const wdLevel = settings.wordDriftLevel !== undefined ? settings.wordDriftLevel : 1;
 
 	updateGaugeButton('btn-speed', sIdx);
 	updateGaugeButton('btn-line-width', lIdx);
 	updateGaugeButton('btn-attraction', aIdx);
 	updateGaugeButton('btn-grain', gIdx);
+	updateDriftButton(wdLevel);
+
+	// コンソールON/OFFボタンの状態同期
+	const consoleEnabled = settings.consoleEnabled !== undefined ? settings.consoleEnabled : true;
+	const consoleBtn = document.getElementById('btn-console');
+	if (consoleBtn) {
+		consoleBtn.setAttribute('data-value', consoleEnabled ? 1 : 0);
+		consoleBtn.innerText = consoleEnabled ? 'ON' : 'OFF';
+	}
 }
 
 function closeSettingsPanel() {
@@ -440,6 +566,7 @@ function closeSettingsPanel() {
 	const trigger = document.getElementById('menu-trigger');
 	if (panel) panel.classList.remove('open');
 	if (trigger) {
+		trigger.classList.remove('active');
 		const normalSpan = trigger.querySelector('.normal');
 		const activeSpan = trigger.querySelector('.active-glyph');
 		if (normalSpan && activeSpan) {
@@ -452,12 +579,48 @@ function closeSettingsPanel() {
 function setupSettingsUI() {
 	const trigger = document.getElementById('menu-trigger');
 	const panel = document.getElementById('settings-panel');
+	const fsTrigger = document.getElementById('fullscreen-trigger');
+	
+	// フルスクリーン切り替えイベント紐付け
+	if (fsTrigger) {
+		fsTrigger.addEventListener('click', (e) => {
+			e.stopPropagation();
+			const docEl = document.documentElement;
+			const requestFS = docEl.requestFullscreen || docEl.webkitRequestFullscreen || docEl.mozRequestFullScreen || docEl.msRequestFullscreen;
+			const exitFS = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+			const fsElement = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
+
+			if (!fsElement) {
+				if (requestFS) {
+					requestFS.call(docEl).catch((err) => {
+						console.warn(`Fullscreen error: ${err.message}`);
+					});
+				} else {
+					amebaConsole.log('FS NOT SUPP');
+				}
+			} else {
+				if (exitFS) {
+					exitFS.call(document);
+				}
+			}
+		});
+
+		// フルスクリーン状態変更の監視 (ベンダープレフィックス対応)
+		const fsEvents = ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'];
+		fsEvents.forEach(evt => {
+			document.addEventListener(evt, () => {
+				const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+				amebaConsole.log(isFs ? 'FULLSCR ON' : 'FULLSCR OFF');
+			});
+		});
+	}
 
 	// メニュー開閉
 	if (trigger) {
 		trigger.addEventListener('click', (e) => {
 			e.stopPropagation();
 			const isOpen = panel.classList.toggle('open');
+			trigger.classList.toggle('active', isOpen);
 			
 			// パネルの開閉状態に応じてトリガー表示を同期
 			const normalSpan = trigger.querySelector('.normal');
@@ -475,23 +638,26 @@ function setupSettingsUI() {
 	}
 
 	// 設定パネル内部タッチがキャンバスに伝播して物理シミュレーションを邪魔するのを防ぎます
-	// ただし、インタラクティブ要素（スライダー・ボタン等）以外をタップした時はパネルを閉じます
 	panel.addEventListener('pointerdown', (e) => {
-		const isInteractive = e.target.closest('input[type="range"]') || 
-		                      e.target.closest('.gauge-btn') || 
-		                      e.target.closest('#btn-reset');
-		if (!isInteractive) {
-			closeSettingsPanel();
-		} else {
-			e.stopPropagation();
-		}
+		e.stopPropagation();
 	});
-
 	panel.addEventListener('pointermove', (e) => {
 		e.stopPropagation();
 	});
 	panel.addEventListener('pointerup', (e) => {
 		e.stopPropagation();
+	});
+
+	// スライド（スクロール）動作と干渉しないよう、余白タップによるクローズは click イベントで行います
+	// click イベントはドラッグ・スライド時（スクロール中）には発火しないため、バッティングを防げます
+	panel.addEventListener('click', (e) => {
+		const isInteractive = e.target.closest('input[type="range"]') || 
+		                      e.target.closest('.gauge-btn') || 
+		                      e.target.closest('#btn-reset') ||
+		                      e.target.closest('.tuning-container');
+		if (!isInteractive) {
+			closeSettingsPanel();
+		}
 	});
 
 	// パネル外タッチで閉じる
@@ -503,18 +669,24 @@ function setupSettingsUI() {
 
 	// 各スライダー変更時のイベント
 	document.getElementById('param-ambient-vol').addEventListener('input', (e) => {
-		CONFIG.AUDIO.DRONE.VOLUME = parseFloat(e.target.value);
+		const val = parseFloat(e.target.value);
+		CONFIG.AUDIO.DRONE.VOLUME = val;
+		updateSliderValueDisplay('param-ambient-vol', val);
 		updateAudioDroneDucking(pointer.active, true);
 		saveSettings();
 	});
 
 	document.getElementById('param-flow-vol').addEventListener('input', (e) => {
-		CONFIG.AUDIO.WATER_FLOW.MAX_VOLUME = parseFloat(e.target.value);
+		const val = parseFloat(e.target.value);
+		CONFIG.AUDIO.WATER_FLOW.MAX_VOLUME = val;
+		updateSliderValueDisplay('param-flow-vol', val);
 		saveSettings();
 	});
 
 	document.getElementById('param-bubbles-vol').addEventListener('input', (e) => {
-		CONFIG.AUDIO.BUBBLE.MAX_VOLUME = parseFloat(e.target.value);
+		const val = parseFloat(e.target.value);
+		CONFIG.AUDIO.BUBBLE.MAX_VOLUME = val;
+		updateSliderValueDisplay('param-bubbles-vol', val);
 		saveSettings();
 	});
 
@@ -524,18 +696,47 @@ function setupSettingsUI() {
 	bindGaugeEvents('btn-attraction', applyAttractionSetting);
 	bindGaugeEvents('btn-grain', applyGrainSetting);
 
+	// Word Drift (漂う単語) ボタンのイベント紐付け
+	const driftBtn = document.getElementById('btn-word-drift');
+	if (driftBtn) {
+		driftBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			const current = parseInt(driftBtn.getAttribute('data-value'), 10) || 0;
+			const next = (current + 1) % 3; // 0 -> 1 -> 2 -> 0...
+			updateDriftButton(next);
+			wordDrift.setLevel(next);
+			saveSettings();
+		});
+	}
+
+	// コンソールON/OFFボタンのイベント紐付け
+	const consoleBtn = document.getElementById('btn-console');
+	if (consoleBtn) {
+		consoleBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			const current = parseInt(consoleBtn.getAttribute('data-value'), 10) || 0;
+			const next = current === 1 ? 0 : 1;
+			consoleBtn.setAttribute('data-value', next);
+			consoleBtn.innerText = next === 1 ? 'ON' : 'OFF';
+			applyConsoleSetting(next);
+			saveSettings();
+		});
+	}
+
 	// デフォルトへのリセットイベント
 	document.getElementById('btn-reset').addEventListener('click', (e) => {
 		e.stopPropagation();
 
 		const defaults = {
-			ambientVol: 0.10,
-			flowVol: 0.030,
-			bubblesVol: 0.055,
+			ambientVol: 0.20,
+			flowVol: 0.10,
+			bubblesVol: 0.15,
 			speedIdx: 2,      // MEDIUM
 			lineWidthIdx: 2,  // MEDIUM (22.0)
 			attractionIdx: 2, // MEDIUM (0.35)
-			grainIdx: 2       // MEDIUM (0.38)
+			grainIdx: 2,       // MEDIUM (0.38)
+			consoleEnabled: true,
+			wordDriftLevel: 1 // GENTLE (ひかえめ)
 		};
 
 		// CONFIG パラメータの復元
@@ -547,12 +748,21 @@ function setupSettingsUI() {
 		applyLineWidthSetting(defaults.lineWidthIdx);
 		applyAttractionSetting(defaults.attractionIdx);
 		applyGrainSetting(defaults.grainIdx);
+		applyConsoleSetting(1);
+		wordDrift.setLevel(defaults.wordDriftLevel);
 
 		// ボタン表示の更新
 		updateGaugeButton('btn-speed', defaults.speedIdx);
 		updateGaugeButton('btn-line-width', defaults.lineWidthIdx);
 		updateGaugeButton('btn-attraction', defaults.attractionIdx);
 		updateGaugeButton('btn-grain', defaults.grainIdx);
+		updateDriftButton(defaults.wordDriftLevel);
+
+		const consoleBtn = document.getElementById('btn-console');
+		if (consoleBtn) {
+			consoleBtn.setAttribute('data-value', 1);
+			consoleBtn.innerText = 'ON';
+		}
 
 		// 音量ゲインへ即時反映
 		updateAudioDroneDucking(pointer.active, true);
@@ -560,17 +770,118 @@ function setupSettingsUI() {
 		// スライダーと設定値の同期
 		syncSlidersToConfig(defaults);
 
+		// デバッグチューナーの同期
+		if (window.syncTuningUIFromConfig) {
+			window.syncTuningUIFromConfig();
+		}
+
 		// ローカルストレージに保存
 		saveSettings();
 	});
+}
+
+// --- デバッグチューナー用ロジック (一時的) ---
+function initTuningConsole() {
+	const toggleBtn = document.getElementById('btn-toggle-tuner');
+	const contentDiv = document.getElementById('tuning-content');
+	const sliders = document.querySelectorAll('.tune-slider');
+	const inputs = document.querySelectorAll('.tune-val');
+	const jsonOutput = document.getElementById('tuning-json-output');
+
+	if (sliders.length === 0) return;
+
+	// 開閉制御
+	if (toggleBtn && contentDiv) {
+		toggleBtn.addEventListener('click', (e) => {
+			e.stopPropagation();
+			const isHidden = contentDiv.style.display === 'none';
+			contentDiv.style.display = isHidden ? 'flex' : 'none';
+			toggleBtn.innerText = isHidden ? '[ CLOSE TUNER ]' : '[ PARAMETER TUNER ]';
+		});
+	}
+
+	// スライダーの値と入力を CONFIG.MAPS から初期化する
+	function syncTuningUIFromConfig() {
+		sliders.forEach(slider => {
+			const param = slider.getAttribute('data-param');
+			const idx = parseInt(slider.getAttribute('data-idx'), 10);
+			if (CONFIG.MAPS[param] && CONFIG.MAPS[param][idx] !== undefined) {
+				const val = CONFIG.MAPS[param][idx];
+				slider.value = val;
+				
+				// 対応するテキストボックスの値を更新
+				const valInput = document.querySelector(`.tune-val[data-param="${param}"][data-idx="${idx}"]`);
+				if (valInput) valInput.value = val;
+			}
+		});
+		updateTuningJSON();
+	}
+
+	// JSONテキスト出力を生成
+	function updateTuningJSON() {
+		if (!jsonOutput) return;
+		const data = {
+			SPEED: CONFIG.MAPS.SPEED,
+			LINE_WIDTH: CONFIG.MAPS.LINE_WIDTH,
+			ATTRACTION: CONFIG.MAPS.ATTRACTION,
+			GRAIN: CONFIG.MAPS.GRAIN
+		};
+		jsonOutput.value = JSON.stringify(data);
+	}
+
+	// 各スライダーの変更イベント
+	sliders.forEach(slider => {
+		slider.addEventListener('input', (e) => {
+			const param = e.target.getAttribute('data-param');
+			const idx = parseInt(e.target.getAttribute('data-idx'), 10);
+			const val = parseFloat(e.target.value);
+
+			// CONFIG.MAPS を書き換え
+			if (CONFIG.MAPS[param]) {
+				CONFIG.MAPS[param][idx] = val;
+			}
+
+			// テキストボックスの更新
+			const valInput = document.querySelector(`.tune-val[data-param="${param}"][data-idx="${idx}"]`);
+			if (valInput) valInput.value = val;
+
+			// リアルタイム反映:
+			// 現在選択されているレベルと同じインデックスを変更した場合、即座にアメーバに物理適用する
+			if (param === 'SPEED') {
+				const currentLvl = getGaugeLevel('btn-speed');
+				if (currentLvl === idx) applySpeedSetting(idx);
+			} else if (param === 'LINE_WIDTH') {
+				const currentLvl = getGaugeLevel('btn-line-width');
+				if (currentLvl === idx) applyLineWidthSetting(idx);
+			} else if (param === 'ATTRACTION') {
+				const currentLvl = getGaugeLevel('btn-attraction');
+				if (currentLvl === idx) applyAttractionSetting(idx);
+			} else if (param === 'GRAIN') {
+				const currentLvl = getGaugeLevel('btn-grain');
+				if (currentLvl === idx) applyGrainSetting(idx);
+			}
+
+			updateTuningJSON();
+		});
+
+		// タッチ操作時のバブリングを止める（キャンバスのドラッグを邪魔しないようにする）
+		slider.addEventListener('pointerdown', (e) => e.stopPropagation());
+	});
+
+	// リセット時や初期化時に UI を同期させるためにグローバル参照できるようにする
+	window.syncTuningUIFromConfig = syncTuningUIFromConfig;
+
+	// 初期同期
+	syncTuningUIFromConfig();
 }
 
 // --- 初期化 ---
 resizeCanvas();
 initBlobs();
 syncSlidersToConfig(); // デフォルト設定の同期
-loadSettings();        // ローカルストレージ設定のロード
+loadSettings();        // ローカルストレージ設定 of ロード
 setupSettingsUI();     // UIイベント設定
+initTuningConsole();   // デバッグチューナー of 初期化
 
 // 初期起動・初期ロード直後は補間の遅延なく即座に反映する
 if (typeof interpolations !== 'undefined') {

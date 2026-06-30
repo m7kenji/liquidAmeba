@@ -250,11 +250,11 @@ export class Amoeba {
 					this.vy += (dy / dist) * pullForce;
 				}
 
-				// 指に本当に近い（捕まった）アメーバだけ、指の速度を強く継承
+				// 指に本当に近い（捕まった）アメーバだけ、指の速度を強く継承（ATTRACTIONと連動）
 				if (pct > 0.5) {
 					const followPct = (pct - 0.5) * 2; // 0〜1に補間
-					this.vx += pointer.vx * 0.35 * followPct;
-					this.vy += pointer.vy * 0.35 * followPct;
+					this.vx += pointer.vx * CONFIG.POINTER.PULL_FORCE * followPct;
+					this.vy += pointer.vy * CONFIG.POINTER.PULL_FORCE * followPct;
 				}
 
 				// 指に近いほど摩擦力を強めてアメーバを指に吸い着かせます
