@@ -87,6 +87,12 @@ export function drawPointer(ctx, pointer) {
 
 	ctx.save();
 
+	// ぼかし量(LINE WIDTH)に基づいて、グラデーションのクッキリ度(ソリッド化)を動的に調整
+	const blurEl = document.getElementById('base-blur');
+	const stdDev = blurEl ? parseFloat(blurEl.getAttribute('stdDeviation')) : 8.0;
+	// 8px(通常)〜58px(以上)の範囲で、グラデーション変調係数を 0.0 から 1.0 へマッピング
+	const blend = Math.min(1.0, Math.max(0, stdDev - 8.0) / 50.0);
+
 	const grad = ctx.createRadialGradient(
 		pointer.x, pointer.y, 0,
 		pointer.x, pointer.y, pointer.visualRadius
@@ -94,8 +100,16 @@ export function drawPointer(ctx, pointer) {
 
 	// アクティブ時とリリース時でアルファ値のターゲットをLerp
 	const alpha = pointer.active ? 0.85 : (pointer.visualRadius / pointer.visualTargetRadius) * 0.85;
+
+	// blendが1.0に近づくほど、不透明度が円の境界線近くまで維持されるように各ストップ位置とアルファ値をブレンド
+	const stop1 = 0.5 + blend * 0.35;                   // 0.5 〜 0.85
+	const stop2 = 0.8 + blend * 0.15;                   // 0.8 〜 0.95
+	const alphaMiddle = alpha * (0.45 + blend * 0.45);   // 0.45alpha 〜 0.90alpha
+	const alphaEdge = alpha * 0.1 * (1.0 - blend);       // 0.1alpha 〜 0.0
+
 	grad.addColorStop(0, `rgba(255, 255, 255, ${alpha})`);
-	grad.addColorStop(0.5, `rgba(255, 255, 255, ${alpha * 0.45})`);
+	grad.addColorStop(stop1, `rgba(255, 255, 255, ${alphaMiddle})`);
+	grad.addColorStop(stop2, `rgba(255, 255, 255, ${alphaEdge})`);
 	grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
 
 	ctx.beginPath();

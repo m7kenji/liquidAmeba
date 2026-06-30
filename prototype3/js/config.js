@@ -28,9 +28,9 @@ export const CONFIG = {
 	// ポインター（タッチ）物理
 	POINTER: {
 		RADIUS: 56,           // 28 -> 56 LINE WIDTH最大時の視認性維持のため大きさを2倍に拡張
-		PULL_RANGE_MULTIPLIER: 3.0,
-		PULL_FORCE: 0.22,
-		MAX_FRICTION_DECREASE: 0.24,
+		PULL_RANGE_MULTIPLIER: 1.6, // 3.0 -> 1.6 吸引影響範囲を大幅に縮小し、指の直近のみに限定
+		PULL_FORCE: 0.35,     // 0.22 -> 0.35 指の直下での初期吸引力を強化
+		MAX_FRICTION_DECREASE: 0.32, // 0.24 -> 0.32 指の直下で滑らかに吸い付くブレーキ感
 		EXPAND_EASING: 0.10,
 		SHRINK_EASING: 0.08
 	},

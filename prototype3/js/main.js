@@ -228,7 +228,6 @@ function saveSettings() {
 		fluidSpeed: CONFIG.AMOEBA.MAX_SPEED,
 		lineWidth: parseFloat(document.getElementById('base-blur').getAttribute('stdDeviation')),
 		attraction: CONFIG.POINTER.PULL_FORCE,
-		wiggle: CONFIG.AMOEBA.WIGGLE_SCALE,
 		grain: CONFIG.VISUAL.GRAIN_STRENGTH
 	};
 	localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
@@ -252,8 +251,10 @@ function loadSettings() {
 		}
 
 		if (settings.attraction !== undefined) CONFIG.POINTER.PULL_FORCE = settings.attraction;
-		if (settings.wiggle !== undefined) CONFIG.AMOEBA.WIGGLE_SCALE = settings.wiggle;
 		if (settings.grain !== undefined) CONFIG.VISUAL.GRAIN_STRENGTH = settings.grain;
+
+		// WIGGLE_SCALEは1.0に固定
+		CONFIG.AMOEBA.WIGGLE_SCALE = 1.0;
 
 		if (settings.lineWidth !== undefined) {
 			document.getElementById('base-blur').setAttribute('stdDeviation', settings.lineWidth);
@@ -277,7 +278,6 @@ function syncSlidersToConfig(settings = {}) {
 	const bubbles = settings.bubblesVol !== undefined ? settings.bubblesVol : CONFIG.AUDIO.BUBBLE.MAX_VOLUME;
 	const speed = settings.fluidSpeed !== undefined ? settings.fluidSpeed : CONFIG.AMOEBA.MAX_SPEED;
 	const attraction = settings.attraction !== undefined ? settings.attraction : CONFIG.POINTER.PULL_FORCE;
-	const wiggle = settings.wiggle !== undefined ? settings.wiggle : CONFIG.AMOEBA.WIGGLE_SCALE;
 	const grain = settings.grain !== undefined ? settings.grain : CONFIG.VISUAL.GRAIN_STRENGTH;
 
 	const baseBlurElement = document.getElementById('base-blur');
@@ -290,7 +290,6 @@ function syncSlidersToConfig(settings = {}) {
 	document.getElementById('param-fluid-speed').value = speed;
 	document.getElementById('param-line-width').value = stdDev;
 	document.getElementById('param-attraction').value = attraction;
-	document.getElementById('param-wiggle').value = wiggle;
 	document.getElementById('param-grain').value = grain;
 
 	applyGrainStrength(grain);
@@ -361,11 +360,6 @@ function setupSettingsUI() {
 		saveSettings();
 	});
 
-	document.getElementById('param-wiggle').addEventListener('input', (e) => {
-		CONFIG.AMOEBA.WIGGLE_SCALE = parseFloat(e.target.value);
-		saveSettings();
-	});
-
 	document.getElementById('param-grain').addEventListener('input', (e) => {
 		const val = parseFloat(e.target.value);
 		CONFIG.VISUAL.GRAIN_STRENGTH = val;
@@ -383,8 +377,7 @@ function setupSettingsUI() {
 			bubblesVol: 0.055,
 			fluidSpeed: 0.16,
 			lineWidth: 8.0,
-			attraction: 0.22,
-			wiggle: 1.0,
+			attraction: 0.35,
 			grain: 0.40
 		};
 
@@ -399,7 +392,7 @@ function setupSettingsUI() {
 		
 		CONFIG.AMOEBA.FUSION_RANGE_MULTIPLIER = 4.0; // 4.0固定
 		CONFIG.POINTER.PULL_FORCE = defaults.attraction;
-		CONFIG.AMOEBA.WIGGLE_SCALE = defaults.wiggle;
+		CONFIG.AMOEBA.WIGGLE_SCALE = 1.0; // 1.0固定
 		CONFIG.VISUAL.GRAIN_STRENGTH = defaults.grain;
 
 		// SVG フィルタの太さとノイズリセット

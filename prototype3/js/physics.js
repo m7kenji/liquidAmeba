@@ -18,9 +18,14 @@ export const pointer = {
 	visualTargetRadius: CONFIG.POINTER.RADIUS,
 
 	update() {
-		// 最新の config 値を動的に同期します
-		this.radius = CONFIG.POINTER.RADIUS;
-		this.visualTargetRadius = CONFIG.POINTER.RADIUS;
+		// 最新の config 値を動的に同期しつつ、ぼかし量(LINE WIDTH)に応じて半径をマイルドにスケールします
+		const blurEl = document.getElementById('base-blur');
+		const stdDev = blurEl ? parseFloat(blurEl.getAttribute('stdDeviation')) : 8.0;
+		// 基準8.0pxから最大75.0pxのぼかし量に対して、サイズ倍率を1.0倍〜約1.6倍に線形マッピング
+		const sizeFactor = 1.0 + Math.max(0, stdDev - 8.0) * 0.009;
+
+		this.radius = CONFIG.POINTER.RADIUS * sizeFactor;
+		this.visualTargetRadius = CONFIG.POINTER.RADIUS * sizeFactor;
 
 		if (this.active) {
 			this.vx = this.x - this.lastX;
@@ -239,9 +244,17 @@ export class Amoeba {
 				const pct = Math.max(0, 1 - dist / pullRange);
 
 				if (dist > 1) {
-					const pullForce = Math.pow(pct, 2) * CONFIG.POINTER.PULL_FORCE;
+					// 3.5乗の急激な減衰：指の直近でのみ強い引力が発生し、遠くのアメーバを刺激しない
+					const pullForce = Math.pow(pct, 3.5) * CONFIG.POINTER.PULL_FORCE;
 					this.vx += (dx / dist) * pullForce;
 					this.vy += (dy / dist) * pullForce;
+				}
+
+				// 指に本当に近い（捕まった）アメーバだけ、指の速度を強く継承
+				if (pct > 0.5) {
+					const followPct = (pct - 0.5) * 2; // 0〜1に補間
+					this.vx += pointer.vx * 0.35 * followPct;
+					this.vy += pointer.vy * 0.35 * followPct;
 				}
 
 				// 指に近いほど摩擦力を強めてアメーバを指に吸い着かせます
